@@ -38,7 +38,7 @@ api /api/scan -X POST -H 'Content-Type: application/json' -d '{"roots":["~/Proje
 | POST | `/api/network/osblock` | `{host\|ips, op: block\|unblock}` preview the command · add `execute:true, confirm:true` to run it |
 | POST | `/api/archive` | `{path, confirm:true, trash_original, exclude_regen}` → job id |
 | GET | `/api/archives` · POST `/api/archive/restore` | list archives · `{file, target_dir?}` restore |
-| POST | `/api/meta` | `{path, color, rating, status, notes}` project tags |
+| POST | `/api/meta` | `{path, color, rating, status, notes, category, tags}` your project tags |
 | POST | `/api/run` · `/api/runs/stop` · `/api/runs/stop_all` | managed runs |
 | GET | `/api/runs[?id=]` | runs, live logs, port panel |
 | POST | `/api/kill` | `{pid, confirm:true}` (project processes only) |
@@ -46,3 +46,19 @@ api /api/scan -X POST -H 'Content-Type: application/json' -d '{"roots":["~/Proje
 | POST | `/api/delete/cache` | delete a cache folder |
 | GET | `/api/reclaim` | reclaimable caches |
 | POST | `/api/open` | reveal a path in Finder / Explorer / file manager |
+| GET | `/api/scan/progress` | phase, `pct`, `eta_s`, `elapsed_s`, `detail` |
+| GET | `/api/ports` · POST `/api/ports/stop` | every listening port · `{pid, port, force}` stop your own program |
+| GET | `/api/tools[?refresh=1]` | CLI tools, pip / npm / brew / pipx / cargo packages, zsh plugins |
+| POST | `/api/tools/latest` · `/api/tools/action` | check newest versions (job) · `{manager, name\|path, action: update\|remove, confirm:true}` |
+| GET | `/api/pkg/info?manager=&name=&current=` | description, newest version, release notes since `current` |
+| GET | `/api/caches` · POST `/api/caches/scan` · `/api/caches/clean` | measured caches · measure (job) · `{id}` clean with the tool's command |
+| GET | `/api/disk?path=` · POST `/api/disk/delete` | folder children with sizes · `{path, confirm:<name>, permanent}` |
+| POST | `/api/duplicates/rescan` | `{folders: [...]}` re-check duplicates incl. extra folders (job) |
+| GET | `/api/agents/latest?id=` · `/api/agents/archived` | newest version of an agent · archived sessions |
+| POST | `/api/agents/session` | `{agent, file, action: view\|handoff\|tag\|archive\|restore\|delete, tags?}` |
+| POST | `/api/agents/stop` · `/api/network/stop` | `{pid, force}` stop one of your processes |
+| GET | `/api/transfer/options` · POST `/api/transfer` | agents + model suggestions · `{path, agent, model}` hand a project to another agent |
+| POST | `/api/terminal` | `{command, cwd, confirm:true}` open the OS terminal with a command |
+| POST | `/api/skills/action` | `{action: delete\|share\|consolidate, path, agent?, keep?, confirm:true}` |
+| POST | `/api/schedules/action` | `{schedule, action: pause\|resume\|reschedule\|delete, expr?, confirm:true}` |
+| POST | `/api/network/app-level` · `/api/network/clear-log` | `{app, level}` per-project guard level · clear the guard log |

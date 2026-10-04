@@ -4,10 +4,10 @@
     python3 scripts/bump_version.py 2.1.0        # set an explicit version
     python3 scripts/bump_version.py patch|minor|major
 
-Updates VERSION, desktop/package.json and adds a CHANGELOG stub, then prints the
-git commands to tag the release. Pushing a tag `vX.Y.Z` triggers the GitHub
-workflow that builds the .dmg / .exe / .AppImage and publishes them; the
-desktop app's auto-updater picks the new release up from there.
+Updates VERSION, desktop/package.json, every "current version" mention in the docs (README, landing page,
+wiki home, roadmap) and turns CHANGELOG's [Unreleased] section into the new version. Pushing the change to
+main starts the GitHub workflow that builds the .dmg / .exe / .AppImage and publishes them; the desktop
+app's auto-updater picks the new release up from there.
 """
 import datetime
 import json
@@ -36,6 +36,20 @@ def main():
     pkg["version"] = new
     with open(pj, "w") as f:
         f.write(json.dumps(pkg, indent=2) + "\n")
+    for rel, pats in (("README.md", [r"(current version: \*\*)[\d.]+(\*\*)"]),
+                      ("docs/index.html", [r'("softwareVersion": ")[\d.]+(")', r"(Current version <b>)[\d.]+(</b>)"]),
+                      ("docs/wiki/Home.md", [r"(\*\*Current version: )[\d.]+(\*\*)"]),
+                      ("ROADMAP.md", [r"(\*\*Current version: )[\d.]+(\*\*)"]),
+                      ("docs/wiki/Roadmap.md", [r"(\*\*Current version: )[\d.]+(\*\*)"])):
+        fp = os.path.join(ROOT, rel)
+        if not os.path.isfile(fp):
+            continue
+        with open(fp, encoding="utf-8") as f:
+            text = f.read()
+        for pat in pats:
+            text = re.sub(pat, lambda m: m.group(1) + new + m.group(2), text)
+        with open(fp, "w", encoding="utf-8") as f:
+            f.write(text)
     cl = os.path.join(ROOT, "CHANGELOG.md")
     with open(cl) as f:
         text = f.read()

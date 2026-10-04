@@ -148,6 +148,31 @@ def main():
     w("phone-home/.gitignore", ".env\n")
     w("phone-home/requirements.txt", "# stdlib only\n")
 
+    # ---------------- studio (monorepo: one repo, two apps inside) ----------------
+    w("studio/package.json", json.dumps({"name": "studio", "private": True, "workspaces": ["packages/*"]}, indent=2))
+    w("studio/README.md", "# studio\n\nMonorepo: the web app and the API live in packages/.\n")
+    w("studio/packages/web/package.json", json.dumps({"name": "@studio/web", "version": "0.3.0", "scripts": {"dev": "vite"}, "dependencies": {"react": "18.3.1", "vite": "5.2.0"}}, indent=2))
+    w("studio/packages/web/src/main.tsx", "import React from 'react';\nexport const App = () => null;\n")
+    w("studio/packages/api/pyproject.toml", '[project]\nname = "studio-api"\nversion = "0.1.0"\ndependencies = ["fastapi==0.111.0", "uvicorn==0.30.0"]\n')
+    w("studio/packages/api/main.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    w("studio/tests/fixtures/app/package.json", json.dumps({"name": "fixture-app"}))   # a test fixture, not a project
+    git_init("studio", "git@github.com:demo/studio.git", "monorepo")
+
+    # ---------------- unfinished work: StackRadar should still list these ----------------
+    w("ideas/scratch-bot/README.md", "# scratch bot\n\nTelegram bot idea, never finished.\n")
+    w("ideas/scratch-bot/bot.py", "# TODO: wire up the API\nprint('hello')\n")
+    w("ideas/half-done-scraper/fetch.py", "import urllib.request\n")
+    w("ideas/half-done-scraper/parse.py", "def parse(html):\n    pass\n")
+    w("ideas/half-done-scraper/store.py", "def store(rows):\n    pass\n")
+    w("dotfiles/install.sh", "#!/bin/sh\nln -sf ~/dotfiles/zshrc ~/.zshrc\n")
+    w("dotfiles/zshrc", "export EDITOR=vim\n")
+    git_init("dotfiles", None, "dotfiles")      # a repo with no package manifest
+
+    # ---------------- look-alikes vs duplicates ----------------
+    w("vibe-portfolio/assets/banner.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x07\x80\x00\x00\x04\x38" + os.urandom(40_000))
+    w("rust-api/assets/banner.png", b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x07\x80\x00\x00\x04\x39" + os.urandom(40_000))
+    shutil.copy(os.path.join(WORK, "data-etl", "data", "partners.csv"), os.path.join(WORK, "data-etl", "data", "partners-final.csv"))
+
     # ---------------- global AI agent folders + skills ----------------
     cs = os.path.join(HOME, ".claude", "skills")
     for n, d in [("pdf", "Create and edit PDF files."), ("frontend-design", "Design distinctive production-grade frontends."),
@@ -176,17 +201,21 @@ def main():
     w(".paperclip/config.json", json.dumps({"server": {"port": 3100}, "companies": 1}), base=HOME)
     w(".gemini/settings.json", json.dumps({"mcpServers": {"context7": {}}}), base=HOME)
     w(".codex/sessions/2026/10/01/rollout-1.jsonl",
+      json.dumps({"type": "session_meta", "payload": {"id": "c0de-1", "cwd": os.path.join(WORK, "rust-api"), "originator": "codex_vscode", "cli_version": "0.50.0", "timestamp": "2026-10-01T10:00:00Z"}}) + "\n" +
+      json.dumps({"type": "turn_context", "payload": {"model": "gpt-5-codex"}}) + "\n" +
+      json.dumps({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Add a health endpoint to rust-api"}]}}) + "\n" +
       json.dumps({"type": "event_msg", "payload": {"type": "exec", "cmd": "cat ~/.codex/skills/changelog/SKILL.md"}}) + "\n" +
       json.dumps({"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 182000, "output_tokens": 9100}}}}) + "\n", base=HOME)
 
     # Claude Code transcripts: tokens + skill / slash-command usage per project
-    def claude_log(proj, n_skill_calls, model="claude-opus-4-1"):
+    def claude_log(proj, n_skill_calls, model="claude-opus-4-1", entry="cli", title=None, days_ago=2, sid="session-1"):
         enc = "".join(c if c.isalnum() else "-" for c in os.path.join(WORK, proj))
-        lines = []
-        ts = time.time() - 86400 * 2
+        lines = [{"type": "custom-title", "customTitle": title, "sessionId": sid}] if title else []
+        ts = time.time() - 86400 * days_ago
         for i in range(12):
-            lines.append({"type": "user", "cwd": os.path.join(WORK, proj), "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts + i * 60)),
-                          "message": {"role": "user", "content": "<command-name>/ship</command-name>" if i == 3 else "keep going"}})
+            lines.append({"type": "user", "cwd": os.path.join(WORK, proj), "entrypoint": entry, "version": "2.1.0", "gitBranch": "main", "sessionId": sid,
+                          "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts + i * 60)),
+                          "message": {"role": "user", "content": "<command-name>/ship</command-name>" if i == 3 else ("Build the %s feature end to end" % proj if i == 0 else "keep going")}})
             content = [{"type": "text", "text": "ok"}]
             if i < len(n_skill_calls):
                 content.append({"type": "tool_use", "name": "Skill", "input": {"skill": n_skill_calls[i]}})
@@ -195,21 +224,29 @@ def main():
             lines.append({"type": "assistant", "cwd": os.path.join(WORK, proj), "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts + i * 60 + 5)),
                           "message": {"model": model, "content": content, "usage": {"input_tokens": 1800 + i * 90, "output_tokens": 420 + i * 30,
                                                                                     "cache_read_input_tokens": 12000, "cache_creation_input_tokens": 900}}})
-        w(os.path.join(".claude", "projects", enc, "session-1.jsonl"), "\n".join(json.dumps(l) for l in lines) + "\n", base=HOME)
-    claude_log("vibe-portfolio", ["frontend-design", "brand-voice", "frontend-design", "pdf"])
-    claude_log("next-shop", ["code-review", "code-review", "changelog", "anthropic-skills:xlsx"], model="claude-sonnet-4-5")
-    claude_log("agent-ops", ["deep-research", "pr-triage"])
+        fp = w(os.path.join(".claude", "projects", enc, sid + ".jsonl"), "\n".join(json.dumps(l) for l in lines) + "\n", base=HOME)
+        os.utime(os.path.join(HOME, ".claude", "projects", enc, sid + ".jsonl"), (ts + 800, ts + 800))
+    claude_log("vibe-portfolio", ["frontend-design", "brand-voice", "frontend-design", "pdf"], entry="claude-desktop", title="Portfolio hero + about page")
+    claude_log("next-shop", ["code-review", "code-review", "changelog", "anthropic-skills:xlsx"], model="claude-sonnet-4-5", entry="claude-vscode", title="Stripe checkout flow")
+    claude_log("agent-ops", ["deep-research", "pr-triage"], title="Weekly report job")
+    claude_log("ideas/scratch-bot", [], model="claude-sonnet-4-5", title="Telegram bot (stalled)", days_ago=45, sid="session-old")
+
+    # tool caches (so the Caches tab has something to show)
+    for rel, mb in ((".npm/_cacache/content-v2/sha512/aa/blob", 6), (".cache/pip/http-v2/b/blob", 3), (".cache/ms-playwright/chromium-1140/chrome", 9),
+                    (".cache/huggingface/hub/models--demo/blob", 12), (".cache/uv/archive-v0/blob", 2), (".cache/go-build/00/blob", 4),
+                    (".cache/electron/electron-v31-linux-x64.zip", 5), (".cache/some-app/state.bin", 1)):
+        w(rel, b"\0" * (mb * 1024 * 1024), base=HOME)
 
     # user crontab-like file for display (we don't touch the real crontab)
     w(".config/systemd/user/backup.timer", "[Timer]\nOnCalendar=*-*-* 03:00:00\n", base=HOME)
     w(".config/systemd/user/backup.service", "[Service]\nWorkingDirectory=%s\nExecStart=/bin/bash backup.sh\n" % os.path.join(WORK, "legacy-tools"), base=HOME)
     # StackRadar user tags
     w(".stackradar/projects.json", json.dumps({
-        os.path.join(WORK, "next-shop"): {"color": "#4d9fff", "rating": 4, "status": "active", "notes": "Main storefront. Rotate Stripe key before deploy."},
+        os.path.join(WORK, "next-shop"): {"color": "#4d9fff", "rating": 4, "status": "active", "notes": "Main storefront. Rotate Stripe key before deploy.", "category": "client work", "tags": ["stripe", "launch"]},
         os.path.join(WORK, "data-etl"): {"color": "#f58242", "rating": 2, "status": "fix", "notes": "eval() + debug=True. Needs a security pass."},
-        os.path.join(WORK, "vibe-portfolio"): {"color": "#2dd4a7", "rating": 5, "status": "active", "notes": "Built with Claude Code."},
+        os.path.join(WORK, "vibe-portfolio"): {"color": "#2dd4a7", "rating": 5, "status": "active", "notes": "Built with Claude Code.", "category": "side project"},
         os.path.join(WORK, "legacy-tools"): {"color": "#8b97ad", "rating": 1, "status": "archived", "notes": "Candidate for deletion."},
-        os.path.join(WORK, "agent-ops"): {"color": "#b478ff", "rating": 4, "status": "active", "notes": "Scheduled agents."}}, indent=1), base=HOME)
+        os.path.join(WORK, "agent-ops"): {"color": "#b478ff", "rating": 4, "status": "active", "notes": "Scheduled agents.", "category": "automation"}}, indent=1), base=HOME)
     print("demo HOME ready:", HOME)
     print("run:  HOME=%s python3 stackradar.py --root %s" % (HOME, WORK))
 

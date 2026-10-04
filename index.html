@@ -9,6 +9,9 @@
 <title>StackRadar — workspace radar</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<script>/* apply the saved theme before first paint (no flash) */
+try { var t = JSON.parse(localStorage.getItem("stackradar.theme") || "null"); if (t) { var r = document.documentElement; r.dataset.theme = t.kind; r.style.colorScheme = t.kind; Object.keys(t.tokens || {}).forEach(function (k) { r.style.setProperty(k, t.tokens[k]); }); } } catch (e) {}
+</script>
 </head>
 <body>
 <header id="topbar">
@@ -49,6 +52,8 @@
     <button data-tab="network" data-feature="network"><span class="ni">🛡</span><span class="nl">Network Guard</span><span class="nbadge" id="nbNet"></span></button>
     <div class="nav-group">Machine</div>
     <button data-tab="system" data-feature="system"><span class="ni">♥</span><span class="nl">System</span></button>
+    <button data-tab="ports" data-feature="ports"><span class="ni">⇅</span><span class="nl">Ports</span><span class="nbadge" id="nbPorts"></span></button>
+    <button data-tab="tools" data-feature="tools"><span class="ni">🧰</span><span class="nl">Tools &amp; packages</span><span class="nbadge" id="nbTools"></span></button>
     <button data-tab="env"><span class="ni">⌘</span><span class="nl">Environment</span></button>
     <button data-tab="updates" data-feature="updates"><span class="ni">⬆</span><span class="nl">Updates</span><span class="nbadge" id="nbUpdates"></span></button>
     <div class="nav-group">AI</div>
@@ -57,6 +62,8 @@
     <button data-tab="schedules" data-feature="schedules"><span class="ni">⏰</span><span class="nl">Schedules</span><span class="nbadge" id="nbSched"></span></button>
     <div class="nav-group">Clean-up</div>
     <button data-tab="duplicates" data-feature="duplicates"><span class="ni">⧉</span><span class="nl">Duplicates</span><span class="nbadge" id="nbDupes"></span></button>
+    <button data-tab="disk" data-feature="disk"><span class="ni">▤</span><span class="nl">Disk space</span></button>
+    <button data-tab="caches" data-feature="caches"><span class="ni">🗄</span><span class="nl">Caches</span><span class="nbadge" id="nbCaches"></span></button>
     <button data-tab="reclaim" data-feature="reclaim"><span class="ni">♻</span><span class="nl">Reclaim space</span></button>
     <div class="nav-foot">
       <a href="https://github.com/SYasJ/StackRadar/wiki" target="_blank" rel="noopener">Wiki &amp; docs ↗</a>
@@ -104,6 +111,10 @@
     <section id="tab-schedules" class="tab"></section>
     <section id="tab-duplicates" class="tab"></section>
     <section id="tab-reclaim" class="tab"></section>
+    <section id="tab-ports" class="tab"></section>
+    <section id="tab-tools" class="tab"></section>
+    <section id="tab-disk" class="tab"></section>
+    <section id="tab-caches" class="tab"></section>
   </main>
 </div>
 
@@ -121,5 +132,6 @@
 <script src="/static/features.js"></script>
 <script src="/static/lineage.js"></script>
 <script src="/static/network.js"></script>
+<script src="/static/manage.js"></script>
 </body>
 </html>

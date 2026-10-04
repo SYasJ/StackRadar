@@ -1,8 +1,8 @@
 {
   "name": "stackradar",
   "productName": "StackRadar",
-  "version": "2.1.0",
-  "description": "StackRadar — one local dashboard for every repo, app, port, secret, AI agent, skill, schedule and package on your computer.",
+  "version": "2.2.0",
+  "description": "StackRadar \u2014 one local dashboard for every repo, app, port, secret, AI agent, skill, schedule and package on your computer.",
   "author": {
     "name": "Yasir Jilani",
     "email": "27597591+SYasJ@users.noreply.github.com",
@@ -48,7 +48,7 @@
     "extraMetadata": {
       "desktopName": "stackradar.desktop"
     },
-    "copyright": "© 2026 Yasir Jilani",
+    "copyright": "\u00a9 2026 Yasir Jilani",
     "artifactName": "StackRadar-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
@@ -107,7 +107,7 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "NSHumanReadableCopyright": "© Yasir Jilani"
+        "NSHumanReadableCopyright": "\u00a9 Yasir Jilani"
       }
     },
     "dmg": {

@@ -61,7 +61,7 @@ const HINTS = {
   sk_tools: "Which Claude Code tools you call the most, counted from your local transcripts.",
   schedules: "Everything that runs on a timer: cron in your repos (GitHub Actions, Vercel, node-cron, Celery …), your crontab / launchd / systemd timers / Task Scheduler, and AI-agent cron jobs (OpenClaw, Hermes …).",
   sched_play: "Type any cron expression to see it in plain English with the next 5 run times.",
-  duplicates: "Identical files (same bytes, checked by hash) across your projects, and projects that look like copies of each other.",
+  duplicates: "Exact duplicates have the same file name, size and content (SHA-256). Renamed copies have the same content under another name. Same-name files with different content are listed separately and are not duplicates.",
   settings: "Turn hints and whole features on or off. Everything is saved on this machine.",
 };
 
@@ -134,6 +134,10 @@ function openSettings() {
     ["schedules", "⏰ Schedules", "cron jobs, timers and agent schedules"],
     ["duplicates", "⧉ Duplicates", "identical files and copied projects"],
     ["reclaim", "♻ Reclaim space", "delete caches and build output"],
+    ["ports", "⇅ Ports", "every listening port, stop / kill"],
+    ["tools", "🧰 Tools & packages", "versions, updates, unused packages"],
+    ["disk", "▤ Disk space", "folder sizes, drill down, delete"],
+    ["caches", "🗄 Caches", "tool caches, one-click clean"],
   ];
   modal(`
     <h3>Settings ${hint("settings")}</h3>
@@ -276,7 +280,13 @@ function showJob(id, onDone, title) {
     const j = await api("/api/jobs?id=" + encodeURIComponent(id));
     if (!$("#jobConsole")) { clearInterval(JOBS.poll); return; }
     $("#jobCmd").textContent = j.cmd || "";
-    const pb = $("#jobProg div"); if (pb) pb.style.width = (j.status === "running" ? (j.progress || 8) : 100) + "%";
+    const pb = $("#jobProg div");
+    if (pb) {
+      pb.style.width = (j.status === "running" ? (j.pct != null ? j.pct : 6 + (j.elapsed_s || 0) % 40) : 100) + "%";
+      pb.parentElement.classList.toggle("indeterminate", j.status === "running" && j.pct == null);
+    }
+    const jb = $("#jobBadge");
+    if (jb && j.status === "running") jb.textContent = "running · " + progressLabel(j.pct, j.eta_s, j.elapsed_s);
     const c = $("#jobConsole");
     const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 30;
     c.innerHTML = consoleHtml(j.logs || "");
@@ -480,11 +490,20 @@ function renderSkills() {
       <span class="mono small">${s.uses || 0}×</span> ${s.used_via && s.used_via.length ? `<span class="muted small">via ${esc(s.used_via.join(", "))}</span>` : ""}</td>
     <td class="small">${s.last_used ? fmtAgo(s.last_used) : '<span class="muted">never</span>'}${s.used_in && s.used_in.length ? `<div class="sub">in ${esc(s.used_in.join(", "))}</div>` : ""}</td>
     <td class="mono small" style="text-align:right">${fmtBytes(s.size)}</td>
-    <td><button class="btn small" data-reveal="${esc(s.folder)}" title="${esc(s.path)}">📂</button></td></tr>`).join("");
+    <td style="white-space:nowrap"><button class="mini-btn" data-reveal="${esc(s.folder)}" title="${esc(s.path)}">📂</button>
+      ${s.plugin ? "" : `<button class="mini-btn" data-skshare="${esc(s.path)}" title="also use it in another agent">⇢</button><button class="mini-btn" data-skdel="${esc(s.path)}" title="move to the Trash">🗑</button>`}
+      ${s.link_target ? `<span class="badge b-cyan" title="linked to ${esc(s.link_target)}">🔗 shared</span>` : ""}</td></tr>`).join("");
   const dupes = (K.duplicates || []).map(d => `<div class="dup-row">
-      <div><b>${esc(d.name)}</b> × ${d.count} ${d.identical ? badge("identical copies", "b-green") : badge("different versions", "b-amber")}
-        <span class="muted small">${esc(d.agents.join(" · "))}${d.wasted ? " · " + fmtBytes(d.wasted) + " redundant" : ""}</span></div>
-      ${d.paths.map(p => `<div class="mono small muted path-line"><span>${esc(p)}</span><button class="mini-btn" data-reveal="${esc(p)}">📂</button></div>`).join("")}</div>`).join("");
+      <div><b>${esc(d.name)}</b> × ${d.count} ${d.identical ? badge("identical copies", "b-green") : badge(d.variants + " different versions", "b-amber")}
+        <span class="muted small">${esc(d.agents.join(" · "))}${d.wasted > 0 ? " · " + fmtBytes(d.wasted) + " redundant" : ""}</span></div>
+      <table class="dup-table"><tr><th>location</th><th>agent</th><th>version</th><th>modified</th><th>uses</th><th></th></tr>
+      ${(d.locations || d.paths.map(p => ({ path: p, folder: p }))).map(l => `<tr>
+        <td class="mono small ellipsis" title="${esc(l.path)}">${esc(l.folder || l.path)}${l.link_target ? ` <span class="badge b-cyan">🔗 link</span>` : ""}${l.project ? ` <span class="badge b-blue">📦 ${esc(l.project)}</span>` : ""}</td>
+        <td class="small">${esc(l.agent || "")}</td>
+        <td>${l.variant ? `<span class="badge ${d.identical ? "b-green" : "b-purple"}" title="same number = identical content">v${l.variant}</span>` : ""}</td>
+        <td class="small" data-v="${l.mtime || 0}">${l.mtime ? fmtAgo(l.mtime) : ""}</td><td class="mono small">${l.uses || 0}</td>
+        <td style="white-space:nowrap;text-align:right">${l.plugin ? '<span class="small muted">plugin</span>' : `<button class="btn ok small" data-skkeep="${esc(l.path)}" title="move this copy to ~/.agents/skills and link every other location to it">keep this, link the rest</button>
+          <button class="mini-btn" data-skdel="${esc(l.path)}" title="move this copy to the Trash">🗑</button>`}<button class="mini-btn" data-reveal="${esc(l.folder || l.path)}">📂</button></td></tr>`).join("")}</table></div>`).join("");
   const ghost = (K.ghost || []).map(g => `<span class="chip" title="${esc(g.via.join(", "))} · last ${fmtAgo(g.last)}">${esc(g.name)} · ${g.uses}×</span>`).join("");
   const tools = Object.entries(((K.claude_totals || {}).tools) || {});
   const maxT = Math.max(1, ...tools.map(t => t[1]));
@@ -523,6 +542,25 @@ function renderSkills() {
   $("#skF").onchange = e => { SK.filter = e.target.value; renderSkills(); };
   $$("#tab-skills [data-skf]").forEach(c => c.onclick = () => { SK.filter = c.dataset.skf; renderSkills(); });
   $$("#tab-skills [data-reveal]").forEach(b => b.onclick = () => revealPath(b.dataset.reveal));
+  const skAct = async (body, msg) => {
+    const j = await api("/api/skills/action", Object.assign({ confirm: true }, body));
+    if (!j.ok) return toast(esc(j.error || "failed"), "err");
+    toast(msg + (j.log ? "<br><span class='small'>" + j.log.map(esc).join("<br>") + "</span>" : ""), "ok");
+    await api("/api/scan", { roots: S.data.roots || ["~"], max_depth: 6 }); startPolling();
+  };
+  $$("#tab-skills [data-skdel]").forEach(b => b.onclick = () => { if (confirm("Move this skill to the Trash?\n" + b.dataset.skdel)) skAct({ action: "delete", path: b.dataset.skdel }, "skill removed"); });
+  $$("#tab-skills [data-skkeep]").forEach(b => b.onclick = () => {
+    if (confirm("Keep this copy as the one shared skill?\n\n" + b.dataset.skkeep + "\n\nIt moves to ~/.agents/skills/, and every other location becomes a link to it (old copies go to the Trash).")) skAct({ action: "consolidate", path: b.dataset.skkeep, keep: b.dataset.skkeep }, "consolidated");
+  });
+  $$("#tab-skills [data-skshare]").forEach(b => b.onclick = () => {
+    const agents = ["Claude Code", "Codex CLI", "Gemini CLI", "Hermes Agent", "OpenClaw", "Cursor", "Copilot", "Goose", "OpenCode", "Agents (shared)"];
+    modal(`<h3>Use this skill in another agent</h3><div class="small mono">${esc(b.dataset.skshare)}</div>
+      <div class="small" style="margin:8px 0">StackRadar adds a link in that agent's skills folder, so there's still one copy to edit.</div>
+      <div class="pill-row">${agents.map(a => `<button class="btn small" data-ska="${esc(a)}">${esc(a)}</button>`).join("")}</div>
+      <div class="m-actions"><button class="btn" id="mCancel">Close</button></div>`);
+    $("#mCancel").onclick = closeModal;
+    $$("[data-ska]").forEach(x => x.onclick = () => { closeModal(); skAct({ action: "share", path: b.dataset.skshare, agent: x.dataset.ska }, "linked into " + esc(x.dataset.ska)); });
+  });
 }
 function projectSkillsPanel(p) {
   const K = (S.data && S.data.skills) || {};
@@ -565,7 +603,8 @@ async function renderSchedules() {
     <td><b>${esc(r.human || "")}</b>${r.expr ? `<div class="sub mono">${esc(r.expr)}</div>` : ""}</td>
     <td>${badge(r.source || r.kind, r.scope === "project" ? "b-cyan" : (/cron$/.test(r.source || "") ? "b-purple" : "b-gray"))}${r.enabled === false ? " " + badge("disabled", "b-gray") : ""}</td>
     <td>${r.project ? `<a href="#" data-openproj="${esc(r.project.path)}">📦 ${esc(r.project.name)}</a>` : '<span class="muted small">—</span>'}</td>
-    <td class="small"><span class="mono ellipsis" title="${esc(r.command || "")}">${esc((r.command || r.name || "").slice(0, 90))}</span>${r.file ? `<div class="sub">${esc(r.file)}</div>` : ""}</td></tr>`).join("");
+    <td class="small"><span class="mono ellipsis" title="${esc(r.command || "")}">${esc((r.command || r.name || "").slice(0, 90))}</span>${r.file ? `<div class="sub">${esc(r.file)}</div>` : ""}</td>
+    <td style="white-space:nowrap;text-align:right">${schedButtons(r, list.indexOf(r))}</td></tr>`).join("");
   el.innerHTML = `
   <h2 class="tab-title">Schedules — what runs on a timer ${hint("schedules")}</h2>
   ${tabHint("schedules")}
@@ -579,7 +618,7 @@ async function renderSchedules() {
   <div class="grid" style="grid-template-columns: 1fr 340px">
     <div class="panel" style="padding:6px 8px">
       <div class="filterbar" style="margin:6px"><input id="schQ" placeholder="filter schedules…" value="${esc(SCH.q)}"></div>
-      <table><tr><th>next run</th><th>when</th><th>source</th><th>project</th><th>what</th></tr>${table || `<tr><td colspan="5" class="muted">No schedules found. StackRadar looks at GitHub Actions, vercel.json, wrangler/netlify, node-cron, Celery beat, Kubernetes CronJobs, your crontab, launchd, systemd timers, Task Scheduler and agent cron files.</td></tr>`}</table></div>
+      <table><tr><th>next run</th><th>when</th><th>source</th><th>project</th><th>what</th><th></th></tr>${table || `<tr><td colspan="6" class="muted">No schedules found. StackRadar looks at GitHub Actions, vercel.json, wrangler/netlify, node-cron, Celery beat, Kubernetes CronJobs, your crontab, launchd, systemd timers, Task Scheduler and agent cron files.</td></tr>`}</table></div>
     <div class="panel"><h3>Cron playground ${hint("sched_play")}</h3>
       <input class="search-in" id="cronIn" value="0 9 * * 1-5" style="width:100%" aria-label="cron expression">
       <div id="cronOut" class="small" style="margin-top:8px"></div>
@@ -595,45 +634,117 @@ async function renderSchedules() {
       : `<span class="sev-high">not a valid cron expression</span>`;
   };
   $("#cronIn").oninput = cron; cron();
+  $$("#tab-schedules [data-sch]").forEach(b => b.onclick = () => schedAct(list[+b.dataset.i], b.dataset.sch));
+  $$("#tab-schedules [data-reveal-sch]").forEach(b => b.onclick = () => revealPath(b.dataset.revealSch));
+}
+function schedButtons(r, i) {
+  const sys = ["crontab", "launchd", "systemd timer", "Task Scheduler"].includes(r.source) || /cron$/.test(r.source || "");
+  const btn = (a, label, title, cls) => `<button class="mini-btn ${cls || ""}" data-sch="${a}" data-i="${i}" title="${title}">${label}</button>`;
+  if (r.scope === "project") return btn("reschedule", "✎", "change the timing in " + (r.file || "the file")) + (r.file && r.project ? `<button class="mini-btn" data-reveal-sch="${esc(r.project.path + "/" + r.file)}" title="show the file">📂</button>` : "");
+  if (!sys) return "";
+  return (r.enabled === false ? btn("resume", "▶", "resume") : btn("pause", "⏸", "pause (keeps it, stops running)")) +
+    btn("reschedule", "✎", "change when it runs") + btn("delete", "🗑", "delete");
+}
+async function schedAct(r, action) {
+  let expr;
+  if (action === "reschedule") {
+    const hintTxt = r.source === "systemd timer" ? "systemd OnCalendar value, e.g. Mon..Fri 09:00 or hourly" : r.source === "launchd" ? "cron with numbers / * (e.g. 30 9 * * 1) or \"every 15m\"" : "cron expression: minute hour day month weekday";
+    expr = prompt(`New schedule for “${r.name || r.command}”\n(${hintTxt})\n\nNow: ${r.expr || r.human}`, r.expr || "");
+    if (!expr) return;
+    if (r.source !== "systemd timer" && !/^every/.test(expr)) {
+      const pv = await api("/api/cron/preview?expr=" + encodeURIComponent(expr));
+      if (!pv.valid) return toast("not a valid cron expression", "err");
+      if (!confirm(`${pv.human}\n\nNext runs:\n${(pv.next || []).slice(0, 3).map(t => new Date(t * 1000).toLocaleString()).join("\n")}\n\nSave?`)) return;
+    }
+  } else if (!confirm(`${{ pause: "Pause", resume: "Resume", delete: "Delete" }[action]} “${r.name || r.command}” (${r.source})?${action === "delete" ? "\n\nA backup is kept in ~/.stackradar/backups." : ""}`)) return;
+  const j = await api("/api/schedules/action", { schedule: r, action, expr, confirm: true });
+  if (!j.ok) return toast(esc(j.error || "failed"), "err");
+  toast(`done${j.note ? " · " + esc(j.note) : ""}`, "ok");
+  renderSchedules();
 }
 
 /* ---------------- Duplicates tab ---------------- */
 
+const DUPV = { view: "exact" };
+function dupFileRow(f, i, opts) {
+  opts = opts || {};
+  return `<tr>
+    <td>${opts.keep && i === 0 ? '<span class="badge b-green" title="oldest / original-looking copy">keep</span>' : ""}
+      <b>${esc(f.name)}</b>${f.dims ? ` <span class="badge b-gray">${esc(f.dims)}</span>` : ""}${opts.variant ? ` <span class="badge b-purple" title="files with the same tag have identical content">version ${esc(opts.variant)}</span>` : ""}
+      <div class="sub mono ellipsis" title="${esc(f.path)}">${esc(f.path)}</div></td>
+    <td><span class="badge b-blue">${esc(f.project)}</span></td>
+    <td class="mono small" data-v="${f.size}">${fmtBytes(f.size)}</td>
+    <td class="small" data-v="${f.mtime}">${fmtAgo(f.mtime)}</td>
+    <td style="white-space:nowrap;text-align:right">
+      ${opts.keep && i === 0 ? "" : `<button class="mini-btn" data-trash="${esc(f.path)}" title="move to the Trash">🗑</button>`}
+      <button class="mini-btn" data-reveal="${esc(f.path)}" title="show in file manager">📂</button></td></tr>`;
+}
+function dupTable(rows) {
+  return `<table class="dup-table"><tr><th>file</th><th>project / folder</th><th>size</th><th>modified</th><th></th></tr>${rows}</table>`;
+}
 function renderDuplicates() {
   const D = S.data.duplicates || {};
-  const groups = D.groups || [];
-  const cross = groups.filter(g => g.cross_project).length;
-  const gHtml = groups.slice(0, 150).map((g, gi) => `<div class="dup-row">
-      <div class="dup-head"><b>${esc(g.name)}</b> <span class="muted small">${fmtBytes(g.size)} × ${g.count}</span>
-        ${g.cross_project ? badge("across projects", "b-blue") : badge("same project", "b-gray")}
-        <span class="spacer"></span><b class="mono" style="color:var(--amber)">${fmtBytes(g.wasted)}</b><span class="muted small">&nbsp;redundant</span></div>
-      ${g.files.map((f, i) => `<div class="path-line small"><span class="badge b-purple">${esc(f.project)}</span><span class="mono muted ellipsis" title="${esc(f.path)}">${esc(f.path)}</span>
-        ${i === 0 ? '<span class="badge b-green">keep</span>' : `<button class="mini-btn" data-trash="${esc(f.path)}" title="move this copy to the Trash">🗑</button>`}
-        <button class="mini-btn" data-reveal="${esc(f.path)}" title="show in file manager">📂</button></div>`).join("")}
-    </div>`).join("");
-  const pHtml = (D.projects || []).map(d => `<div class="dup-row"><div><b>${esc(d.reason)}</b> <span class="mono small muted">${esc(d.key)}</span></div>
-      ${d.projects.map(p => `<div class="path-line small"><a href="#" data-openproj="${esc(p.path)}">📦 ${esc(p.name)}</a><span class="mono muted ellipsis">${esc(p.path)}</span><span class="mono small">${fmtBytes(p.size)}</span></div>`).join("")}</div>`).join("");
+  const groups = D.groups || [], renamed = D.renamed || [], looks = D.lookalikes || [];
+  const views = [
+    ["exact", "Exact duplicates", groups.length, "same name · same size · same content"],
+    ["renamed", "Same content, different name", renamed.length, "renamed copies"],
+    ["lookalike", "Same name, different content", looks.length, "NOT duplicates"],
+    ["projects", "Copied projects", (D.projects || []).length, "same remote or copy-style name"],
+  ];
+  let body = "";
+  if (DUPV.view === "exact") {
+    body = `<div class="small muted" style="margin-bottom:8px">Every file in a group has the <b>same file name</b>, the <b>same size</b> and <b>byte-for-byte the same content</b> (SHA-256). Safe to keep one.</div>` +
+      (groups.slice(0, 150).map(g => `<div class="dup-row">
+        <div class="dup-head"><b>${esc(g.name)}</b> <span class="badge b-green">✓ name ✓ size ✓ content</span>
+          <span class="muted small">${fmtBytes(g.size)} × ${g.count}</span> ${g.cross_project ? badge("across projects", "b-blue") : badge("same project", "b-gray")}
+          <span class="spacer"></span><b class="mono" style="color:var(--amber)">${fmtBytes(g.wasted)}</b><span class="muted small">&nbsp;redundant</span></div>
+        ${dupTable(g.files.map((f, i) => dupFileRow(f, i, { keep: true })).join(""))}</div>`).join("") || '<div class="ok-box">No exact duplicates 🎉</div>');
+  } else if (DUPV.view === "renamed") {
+    body = `<div class="small muted" style="margin-bottom:8px">Same size and identical content, but saved under <b>different names</b> (e.g. <i>photo.png</i> and <i>photo-final.png</i>).</div>` +
+      (renamed.slice(0, 150).map(g => `<div class="dup-row">
+        <div class="dup-head"><b>${g.names.map(esc).join(" = ")}</b> <span class="badge b-amber">✗ name ✓ size ✓ content</span>
+          <span class="muted small">${fmtBytes(g.size)} × ${g.count}</span><span class="spacer"></span><b class="mono" style="color:var(--amber)">${fmtBytes(g.wasted)}</b><span class="muted small">&nbsp;redundant</span></div>
+        ${dupTable(g.files.map((f, i) => dupFileRow(f, i, { keep: true })).join(""))}</div>`).join("") || '<div class="ok-box">No renamed copies.</div>');
+  } else if (DUPV.view === "lookalike") {
+    body = `<div class="warn-box small" style="margin-bottom:8px">These are <b>not duplicates</b>. They share a file name, but the content differs (for images, check the dimensions and dates). Files tagged with the same <i>version</i> are identical to each other. Common names like README.md or package.json are left out.</div>` +
+      (looks.slice(0, 150).map(g => `<div class="dup-row">
+        <div class="dup-head"><b>${esc(g.name)}</b> <span class="badge b-red">✓ name ${g.same_size ? "✓" : "✗"} size ✗ content</span>
+          <span class="muted small">${g.variants} different versions · ${g.count} files</span></div>
+        ${dupTable(g.files.map((f, i) => dupFileRow(f, i, { variant: f.variant.slice(0, 6) })).join(""))}</div>`).join("") || '<div class="ok-box">No look-alikes.</div>');
+  } else {
+    body = (D.projects || []).map(d => `<div class="dup-row"><div><b>${esc(d.reason)}</b> <span class="mono small muted">${esc(d.key)}</span></div>
+      ${d.projects.map(p => `<div class="path-line small"><a href="#" data-openproj="${esc(p.path)}">📦 ${esc(p.name)}</a><span class="mono muted ellipsis">${esc(p.path)}</span><span class="mono small">${fmtBytes(p.size)}</span></div>`).join("")}</div>`).join("") || '<div class="ok-box small">none</div>';
+  }
+  const folders = D.extra_folders || [];
   $("#tab-duplicates").innerHTML = `
   <h2 class="tab-title">Duplicate files &amp; copied projects ${hint("duplicates")}</h2>
   ${tabHint("duplicates")}
   <div class="grid cards" style="margin-bottom:14px">
-    <div class="card"><div class="k">Redundant space</div><div class="v" style="color:var(--amber)">${fmtBytes(D.wasted_total || 0)}</div><div class="s">extra copies beyond the first</div></div>
-    <div class="card"><div class="k">Duplicate groups</div><div class="v">${D.group_count || 0}</div><div class="s">files ≥ ${fmtBytes(D.min_size || 4096)}, hash-verified</div></div>
-    <div class="card"><div class="k">Across projects</div><div class="v" style="color:var(--blue)">${cross}</div><div class="s">same file in different repos</div></div>
-    <div class="card"><div class="k">Copied projects</div><div class="v" style="color:${(D.projects || []).length ? "var(--red)" : "var(--green)"}">${(D.projects || []).length}</div><div class="s">same remote or “copy”-style names</div></div>
+    <div class="card"><div class="k">Redundant space</div><div class="v" style="color:var(--amber)">${fmtBytes((D.wasted_total || 0))}</div><div class="s">exact duplicates beyond the first copy</div></div>
+    ${views.map(v => `<div class="card clickable-card ${DUPV.view === v[0] ? "card-active" : ""}" data-dupv="${v[0]}"><div class="k">${esc(v[1])}</div><div class="v">${v[2]}</div><div class="s">${esc(v[3])}</div></div>`).join("")}
   </div>
-  <div class="grid" style="grid-template-columns: 1.6fr 1fr">
-    <div class="panel"><h3>Identical files <span class="count">largest waste first</span></h3>${gHtml || '<div class="ok-box">No duplicate files found 🎉</div>'}</div>
-    <div class="panel"><h3>Projects that look like copies</h3>${pHtml || '<div class="ok-box small">none</div>'}
-      <div class="small muted" style="margin-top:8px">Duplicate skills are listed in the Skills tab.</div></div>
-  </div>`;
+  <div class="filterbar">
+    <span class="small muted">Checked ${fmtNum(D.files_checked || 0)} files in your projects${folders.length ? " + " + folders.map(f => `<code>${esc(f)}</code>`).join(", ") : ""}${D.budget_hit ? ' · <span class="sev-medium">stopped after 2 GB of hashing</span>' : ""}.</span>
+    <span class="spacer"></span>
+    <input id="dupFolders" placeholder="also check folders, e.g. ~/Pictures, ~/Downloads" value="${esc(folders.join(", "))}" style="min-width:300px">
+    <button class="btn" id="dupRescan">⟳ Check again</button>
+  </div>
+  <div class="pill-row" style="margin-bottom:10px">${views.map(v => `<button class="btn small ${DUPV.view === v[0] ? "ok" : ""}" data-dupv="${v[0]}">${esc(v[1])} (${v[2]})</button>`).join("")}</div>
+  <div class="panel">${body}</div>`;
   const tab = $("#tab-duplicates");
+  $$("[data-dupv]", tab).forEach(b => b.onclick = () => { DUPV.view = b.dataset.dupv; renderDuplicates(); });
+  $("#dupRescan").onclick = async () => {
+    const list = $("#dupFolders").value.split(",").map(x => x.trim()).filter(Boolean);
+    const j = await api("/api/duplicates/rescan", { folders: list });
+    if (!j.ok) return toast(esc(j.error || "failed"), "err");
+    showJob(j.id, async () => { await loadState(); if (S.tab === "duplicates") renderDuplicates(); }, "Finding duplicates…");
+  };
   $$("[data-reveal]", tab).forEach(b => b.onclick = () => revealPath(b.dataset.reveal));
   $$("[data-openproj]", tab).forEach(a => a.onclick = e => { e.preventDefault(); const p = (S.data.projects || []).find(x => x.path === a.dataset.openproj); if (p) openDrawer(p); });
   $$("[data-trash]", tab).forEach(b => b.onclick = async () => {
     const path = b.dataset.trash, name = path.split(/[\\/]/).pop();
     const j = await api("/api/actions", { action: "delete", path, confirm: name, force: false });
-    if (j.ok) { toast("moved to trash — freed " + fmtBytes(j.freed), "ok"); b.closest(".path-line").classList.add("gone"); b.remove(); }
+    if (j.ok) { toast("moved to trash — freed " + fmtBytes(j.freed), "ok"); b.closest("tr").classList.add("gone"); b.remove(); }
     else toast(esc(j.error || "failed"), "err");
   });
 }
@@ -721,7 +832,7 @@ function overviewExtras() {
     card("agents", "agents", "AI agents", A.length, esc(A.slice(0, 3).map(a => a.name).join(" · ") || "none found"), "var(--purple)"),
     card("skills", "skills", "Skills", ((K.summary || {}).installed || 0), `${(K.summary || {}).unused || 0} unused · ${(K.summary || {}).duplicate_names || 0} duplicated`, "var(--text)"),
     card("schedules", "schedules", "Schedules", sched, "cron jobs, timers & agent jobs", "var(--cyan)"),
-    card("duplicates", "duplicates", "Duplicate files", fmtBytes(D.wasted_total || 0), `${D.group_count || 0} groups · ${(D.projects || []).length} copied projects`, "var(--amber)"),
+    card("duplicates", "duplicates", "Duplicate files", fmtBytes(D.wasted_total || 0), `${D.group_count || 0} exact · ${D.renamed_count || 0} renamed · ${D.lookalike_count || 0} look-alikes`, "var(--amber)"),
     card("system", "system", "System load", sys && sys.cpu != null ? Math.round(sys.cpu) + "% CPU" : "—", sys ? `${Math.round((sys.memory || {}).percent || 0)}% RAM · load ${sys.load ? sys.load[0] : "n/a"}` : "live monitor", "var(--green)"),
   ].join("");
   return html ? `<div class="grid cards" style="margin-bottom:14px">${html}</div>` : "";
@@ -747,10 +858,11 @@ Object.assign(RENDERERS, {
 async function featuresInit() {
   setupHintTips();
   try { Object.assign(SETTINGS, await api("/api/settings")); } catch (_) {}
+  if (window.applyTheme) applyTheme();
   applyHints(); applyFeatureToggles();
   if (S.data) render();
   $("#hintsToggle").onchange = async e => { SETTINGS.hints = e.target.checked; applyHints(); await saveSettings({ hints: SETTINGS.hints }); };
-  $("#settingsBtn").onclick = openSettings;
+  $("#settingsBtn").onclick = () => window.openSettings();
   $("#sysMini").onclick = () => { S.tab = "system"; render(); };
   $("#sideToggle").onclick = () => {
     document.body.classList.toggle("side-collapsed");

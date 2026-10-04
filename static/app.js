@@ -10,10 +10,39 @@ window.fetch = (url, opts) => {
   opts.headers = Object.assign({}, opts.headers || {}, { "X-StackRadar-Token": DR_TOKEN });
   return _nativeFetch(url, opts);
 };
+// any request that takes longer than a moment shows a "still working · 4s" pill, so it never looks stuck
+const BUSY = { n: 0, t0: 0, timer: null, label: "" };
+function busyLabel(url) {
+  const m = { "/api/updates/global": "Checking global packages", "/api/deps/check": "Checking dependencies", "/api/tools": "Checking installed tools",
+    "/api/caches": "Measuring caches", "/api/agents": "Reading agent sessions", "/api/schedules": "Reading schedules", "/api/network": "Reading connections",
+    "/api/packages": "Checking packages", "/api/system": "Reading system stats" };
+  const k = Object.keys(m).find(k => url.startsWith(k));
+  return k ? m[k] : "Working";
+}
+function busyStart(url) {
+  if (url.startsWith("/api/system") || url.startsWith("/api/scan/progress") || url.startsWith("/api/jobs") || url.startsWith("/api/network/pending")) return () => {};
+  BUSY.n++; BUSY.label = busyLabel(url);
+  if (BUSY.n === 1) BUSY.t0 = Date.now();
+  const show = () => {
+    let el = document.getElementById("busyPill");
+    if (!el) { el = document.createElement("div"); el.id = "busyPill"; el.setAttribute("role", "status"); document.body.appendChild(el); }
+    el.textContent = BUSY.label + "… " + fmtDur((Date.now() - BUSY.t0) / 1000);
+  };
+  if (!BUSY.timer) BUSY.timer = setInterval(() => { if (Date.now() - BUSY.t0 > 700) show(); }, 250);
+  return () => {
+    BUSY.n = Math.max(0, BUSY.n - 1);
+    if (!BUSY.n) { clearInterval(BUSY.timer); BUSY.timer = null; const el = document.getElementById("busyPill"); if (el) el.remove(); }
+  };
+}
 async function api(url, body) {
-  const r = await fetch(url, body === undefined ? {} : {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
+  const done = busyStart(url);
+  let r;
+  try {
+    r = await fetch(url, body === undefined ? {} : {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+  } catch (e) { done(); return { ok: false, error: "StackRadar engine not reachable" }; }
+  done();
   let j = {};
   try { j = await r.json(); } catch (_) { j = { ok: false, error: "bad response (" + r.status + ")" }; }
   if (!r.ok && j.ok === undefined) j.ok = false;
@@ -98,7 +127,7 @@ function hue(str) {
 function badge(text, cls) { return `<span class="badge ${cls}">${esc(text)}</span>`; }
 function langBadge(lang) {
   if (!lang) return badge("?", "b-gray");
-  return `<span class="badge" style="color:hsl(${hue(lang)},70%,75%);border-color:hsl(${hue(lang)},60%,45%);background:hsl(${hue(lang)},60%,20%)">${esc(lang)}</span>`;
+  return `<span class="badge tag-link" data-tag="lang:${esc(lang)}" title="all ${esc(lang)} projects" style="color:hsl(${hue(lang)},70%,75%);border-color:hsl(${hue(lang)},60%,45%);background:hsl(${hue(lang)},60%,20%)">${esc(lang)}</span>`;
 }
 function riskBadge(level) {
   const m = { high: ["high risk", "b-red"], medium: ["medium", "b-amber"], low: ["low", "b-green"] };
@@ -113,8 +142,8 @@ function srcInfo(p) {
   return badge("no VCS", "b-gray");
 }
 function aiBadge(p) {
-  if (p.llm && p.llm.length) return badge("⚡ " + p.llm[0].tool, "b-amber");
-  if (p.ai_names && p.ai_names.length) return badge("🧠 " + p.ai_names[0], "b-purple");
+  if (p.llm && p.llm.length) return `<span class="badge b-amber tag-link" data-tag="ai:${esc(p.llm[0].tool)}" title="every project built with ${esc(p.llm[0].tool)}">⚡ ${esc(p.llm[0].tool)}</span>`;
+  if (p.ai_names && p.ai_names.length) return `<span class="badge b-purple tag-link" data-tag="ai:${esc(p.ai_names[0])}" title="every project with ${esc(p.ai_names[0])} traces">🧠 ${esc(p.ai_names[0])}</span>`;
   return null;
 }
 function toast(msg, type) {
@@ -161,26 +190,38 @@ function startPolling() {
     }
   }, 700);
 }
+function fmtDur(sec) {
+  if (sec == null) return "";
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m " + String(sec % 60).padStart(2, "0") + "s";
+  return Math.floor(sec / 3600) + "h " + Math.floor((sec % 3600) / 60) + "m";
+}
+// "42% · about 1m 10s left" / "running 12s" — used by the scan bar and every job window
+function progressLabel(pct, eta, elapsed) {
+  const bits = [];
+  if (pct != null) bits.push(Math.round(pct) + "%");
+  if (eta != null && eta > 0) bits.push("about " + fmtDur(eta) + " left");
+  else if (pct != null && pct >= 99) bits.push("finishing…");
+  else if (elapsed != null) bits.push(fmtDur(elapsed) + " so far");
+  return bits.join(" · ");
+}
 function updateScanStatus(p) {
   const wrap = $("#scanBarWrap"), bar = $("#scanBar"), txt = $("#scanText");
   if (!p) return;
   if (p.running) {
     wrap.hidden = false;
-    let pct = 15;
-    const pr = p.progress || {};
-    if (p.phase === "walking file tree") pct = 12 + 20 * (pr.dirs % 17) / 17; // indeterminate-ish
-    else if (p.phase === "analyzing projects") pct = 35 + 55 * ((pr.projects_done || 0) / Math.max(1, pr.projects_total));
-    else if (p.phase === "scanning environment") pct = 92;
-    else if (p.phase === "checking ports & processes") pct = 97;
-    else if (p.phase === "done") pct = 100;
+    const pct = p.pct != null ? p.pct : 3;
     bar.style.width = pct + "%";
-    txt.textContent = (p.phase || "…") + `  ·  dirs ${pr.dirs || 0} · projects ${pr.projects_done || 0}/${pr.projects_total || 0}`;
+    const phase = (p.phase || "starting").replace(/^./, c => c.toUpperCase());
+    txt.textContent = `${phase}${p.detail ? " · " + p.detail : ""}  ·  ${progressLabel(p.pct, p.eta_s, p.elapsed_s)}`;
+    txt.title = "Step " + (["searching folders for projects", "reading projects", "checking installed tools", "checking ports & processes", "skills, agents & schedules", "finding duplicate files"].indexOf(p.phase) + 1) + " of 6";
     $("#scanBtn").disabled = true;
   } else {
     $("#scanBtn").disabled = false;
     if (p.phase === "done") {
       wrap.hidden = true;
-      txt.textContent = `last scan ${p.finished ? fmtAgo(p.finished) : ""} · ${(p.roots || []).join(", ")} · ${(p.finished - p.started).toFixed(1)}s`;
+      txt.textContent = `last scan ${p.finished ? fmtAgo(p.finished) : ""} · ${(p.roots || []).join(", ")} · took ${fmtDur(p.finished - p.started)}`;
     } else if (p.error) {
       wrap.hidden = true;
       txt.textContent = "scan error: " + p.error;
@@ -242,7 +283,7 @@ function render() {
 
 function renderOverview() {
   const d = S.data, P = d.projects || [];
-  const totalSize = P.reduce((a, p) => a + (p.size || 0), 0);
+  const totalSize = P.filter(p => !p.parent).reduce((a, p) => a + (p.size || 0), 0);   // nested projects are inside their parent
   const keysTotal = P.reduce((a, p) => a + (p.key_count || 0), 0);
   const highRisk = P.filter(p => p.risk_level === "high").length;
   const pp0 = d.port_panel || {};
@@ -253,7 +294,7 @@ function renderOverview() {
 
   const cards = `
   <div class="grid cards" style="margin-bottom:14px">
-    <div class="card"><div class="k">Projects found</div><div class="v">${P.length}</div><div class="s">${vcs} with VCS · ${vibe} vibe-coded</div></div>
+    <div class="card"><div class="k">Projects found</div><div class="v">${P.length}</div><div class="s">${vcs} with VCS · ${P.filter(p => p.stage === "incomplete").length} incomplete · ${P.filter(p => p.parent).length} nested</div></div>
     <div class="card"><div class="k">Total size</div><div class="v">${fmtBytes(totalSize)}</div><div class="s">of ${esc((d.roots || []).join(", "))}</div></div>
     <div class="card"><div class="k">Secrets detected</div><div class="v" style="color:${keysTotal ? "var(--red)" : "var(--green)"}">${keysTotal}</div><div class="s">masked in UI — see each project</div></div>
     <div class="card"><div class="k">Open ports</div><div class="v" style="color:var(--cyan)">${(pp0.listening_count != null ? pp0.listening_count : (d.listeners || []).length)}</div><div class="s">${pp0.apps_running || 0} apps running · ${((pp0.killable) || []).length} killable in Runs</div></div>
@@ -348,14 +389,14 @@ function donutSVG(items) {
       const x0 = cx + r * Math.cos(a), y0 = cy + r * Math.sin(a);
       const x1 = cx + r * Math.cos(a2), y1 = cy + r * Math.sin(a2);
       const large = frac > 0.5 ? 1 : 0;
-      paths += `<path d="M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z" fill="${it.color}" stroke="#0b0e14" stroke-width="2">
+      paths += `<path d="M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z" fill="${it.color}" style="stroke:var(--panel)" stroke-width="2">
         <title>${esc(it.label)}: ${fmtBytes(it.value)} (${Math.round(frac * 100)}%)</title></path>`;
     }
     a = a2;
   });
-  paths += `<circle cx="${cx}" cy="${cy}" r="52" fill="#121826"></circle>
-    <text x="${cx}" y="${cy - 4}" text-anchor="middle" fill="#e8ecf5" font-size="15" font-weight="700">${fmtBytes(total)}</text>
-    <text x="${cx}" y="${cy + 14}" text-anchor="middle" fill="#8b97ad" font-size="10">total</text>`;
+  paths += `<circle cx="${cx}" cy="${cy}" r="52" style="fill:var(--panel)"></circle>
+    <text x="${cx}" y="${cy - 4}" text-anchor="middle" style="fill:var(--text)" font-size="15" font-weight="700">${fmtBytes(total)}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" style="fill:var(--dim)" font-size="10">total</text>`;
   return `<svg viewBox="0 0 210 210" style="width:100%;max-width:230px;display:block;margin:0 auto">${paths}</svg>`;
 }
 
@@ -375,6 +416,9 @@ function renderProjects() {
     if (S.fSrc === "keys" && !(p.key_count > 0)) return false;
     if (S.fSrc === "running" && !(p.running || []).length) return false;
     if (S.fStatus && metaOf(p).status !== S.fStatus) return false;
+    if (S.fStage && p.stage !== S.fStage) return false;
+    if (S.fCat && (metaOf(p).category || "") !== (S.fCat === "(none)" ? "" : S.fCat)) return false;
+    if (S.hideNested && p.parent) return false;
     return true;
   };
   let rows = P.filter(filter);
@@ -382,7 +426,7 @@ function renderProjects() {
   const val = p => ({
     name: p.name, size: p.size || 0, last: p.last_run_ts || 0,
     keys: p.key_count || 0, risk: { high: 3, medium: 2, low: 1 }[p.risk_level] || 0,
-    lang: p.primary_language || "",
+    lang: p.primary_language || "", stage: { ready: 3, "in progress": 2, incomplete: 1 }[p.stage] || 0,
   }[k] || 0);
   rows.sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0) * dir);
 
@@ -397,6 +441,11 @@ function renderProjects() {
     <select id="pStatus"><option value="">any status</option>
       ${[["active", "🟢 active"], ["fix", "🟠 needs fix"], ["archived", "⚪ archived"]].map(x => `<option value="${x[0]}" ${S.fStatus === x[0] ? "selected" : ""}>${x[1]}</option>`).join("")}
     </select>
+    <select id="pStage"><option value="">any stage</option>
+      ${[["ready", "✅ ready"], ["in progress", "🛠 in progress"], ["incomplete", "🧩 incomplete"]].map(x => `<option value="${x[0]}" ${S.fStage === x[0] ? "selected" : ""}>${x[1]}</option>`).join("")}
+    </select>
+    <select id="pCat"><option value="">all categories</option>${[...new Set(P.map(p => metaOf(p).category).filter(Boolean))].sort().map(c => `<option ${S.fCat === c ? "selected" : ""}>${esc(c)}</option>`).join("")}<option value="(none)" ${S.fCat === "(none)" ? "selected" : ""}>(no category)</option></select>
+    <label class="small"><input type="checkbox" id="pNested" ${S.hideNested ? "" : "checked"}> nested projects</label>
     <select id="pSrc"><option value="">all sources</option>
       ${[["git", "has git/VCS"], ["local", "no VCS"], ["ai", "AI / IDE traces"], ["keys", "has secrets"], ["running", "running now"]].map(x => `<option value="${x[0]}" ${S.fSrc === x[0] ? "selected" : ""}>${x[1]}</option>`).join("")}
     </select>
@@ -405,7 +454,7 @@ function renderProjects() {
   </div>
   <div class="panel" style="padding:6px 8px">
   <table>
-    <tr>${th("name", "Name")}${th("lang", "Lang")}<th>Purpose</th>${th("size", "Size")}${th("last", "Last run")}<th>Ports</th>${th("keys", "Keys")}${th("risk", "Risk")}<th>VCS</th><th>AI</th><th>Rating</th></tr>
+    <tr>${th("name", "Name")}${th("stage", "Stage")}${th("lang", "Lang")}<th>Purpose</th>${th("size", "Size")}${th("last", "Last run")}<th>Ports</th>${th("keys", "Keys")}${th("risk", "Risk")}<th>VCS</th><th>AI</th><th>Rating</th><th>Run</th></tr>
     ${rows.map(p => {
       const m = metaOf(p);
       const st = STATUS_META[m.status] || STATUS_META.active;
@@ -413,7 +462,12 @@ function renderProjects() {
       return `<tr class="clickable ${rowCls}" data-path="${esc(p.path)}">
       <td><span class="dot" style="background:${colorOf(p)};margin-right:7px"></span><b style="color:${m.color || "var(--text)"}">${esc(p.name)}</b>${p.vibe ? " " + badge("vibe", "b-purple") : ""}
         <div class="sub path">${esc(p.path)}</div>
-        <div style="margin-top:4px">${p.version ? badge("v" + p.version, "b-blue") : ""} ${badge(st.label, st.cls)}</div></td>
+        ${p.parent ? `<div class="sub">↳ inside <b>${esc(p.parent.split(/[\\/]/).pop())}</b></div>` : ""}
+        ${(p.children || []).length ? `<div class="sub">contains ${p.children.length} project${p.children.length > 1 ? "s" : ""}</div>` : ""}
+        <div style="margin-top:4px">${p.version ? badge("v" + p.version, "b-blue") : ""} ${badge(st.label, st.cls)}
+          ${m.category ? `<span class="badge b-cyan tag-link" data-tag="category:${esc(m.category)}">🗂 ${esc(m.category)}</span>` : ""}
+          ${(m.tags || []).map(t => `<span class="badge b-gray tag-link" data-tag="tag:${esc(t)}">#${esc(t)}</span>`).join(" ")}</div></td>
+      <td>${stageBadge(p)}</td>
       <td>${langBadge(p.primary_language)}</td>
       <td class="small" style="max-width:300px">${esc((p.purpose || "").slice(0, 120))}</td>
       <td class="mono" style="white-space:nowrap">${fmtBytes(p.size)}</td>
@@ -424,6 +478,7 @@ function renderProjects() {
       <td>${srcInfo(p)}</td>
       <td>${aiBadge(p) || '<span class="muted small">—</span>'}</td>
       <td style="white-space:nowrap">${starsHtml(p)}</td>
+      <td style="white-space:nowrap">${runBtn(p)}</td>
     </tr>`;
     }).join("")}
   </table></div>`;
@@ -433,6 +488,10 @@ function renderProjects() {
   $("#pRisk").onchange = e => { S.fRisk = e.target.value; renderProjects(); };
   $("#pStatus").onchange = e => { S.fStatus = e.target.value; renderProjects(); };
   $("#pSrc").onchange = e => { S.fSrc = e.target.value; renderProjects(); };
+  $("#pStage").onchange = e => { S.fStage = e.target.value; renderProjects(); };
+  $("#pCat").onchange = e => { S.fCat = e.target.value; renderProjects(); };
+  wireRunBtns($("#tab-projects"), renderProjects);
+  $("#pNested").onchange = e => { S.hideNested = !e.target.checked; renderProjects(); };
   $$("#tab-projects th[data-sort]").forEach(t => t.onclick = () => {
     const key = t.dataset.sort;
     if (S.sort.k === key) S.sort.d *= -1; else S.sort = { k: key, d: -1 };
@@ -451,6 +510,31 @@ function renderProjects() {
     const p = (S.data.projects || []).find(x => x.path === tr.dataset.path);
     if (p) openDrawer(p);
   });
+}
+function runOf(p) { return (S.data.runs || []).find(r => r.path === p.path && r.status === "running"); }
+function runBtn(p) {
+  const r = runOf(p);
+  if (r) return `<button class="btn small" data-runstop="${esc(r.id)}" title="stop the run (pid ${r.pid})">■ Stop</button>${r.port ? ` <a class="mini-btn" href="http://localhost:${r.port}" target="_blank" rel="noopener" title="open">↗</a>` : ""}`;
+  const cmd = (p.run || {}).command;
+  return `<button class="btn ok small" data-runstart="${esc(p.path)}" ${cmd ? `title="${esc(cmd)}"` : 'disabled title="no run command found: open the project to set one"'}>▶ Run</button>`;
+}
+function wireRunBtns(root, after) {
+  $$("[data-runstart]", root).forEach(b => b.onclick = async e => {
+    e.stopPropagation(); b.disabled = true;
+    const j = await api("/api/run", { path: b.dataset.runstart });
+    if (!j.ok) { toast(esc(j.error || "could not start"), "err"); b.disabled = false; return; }
+    toast(`started <b>${esc(j.project || "")}</b>${j.port ? " on port " + j.port : ""} · logs in Runs`, "ok");
+    await loadState(); if (after) after();
+  });
+  $$("[data-runstop]", root).forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    await api("/api/runs/stop", { id: b.dataset.runstop }); toast("stopped", "ok"); await loadState(); if (after) after();
+  });
+}
+function stageBadge(p) {
+  const m = { ready: ["✅ ready", "b-green"], "in progress": ["🛠 in progress", "b-amber"], incomplete: ["🧩 incomplete", "b-gray"] }[p.stage];
+  if (!m) return '<span class="muted small">—</span>';
+  return `<span class="badge ${m[1]} tag-link" data-tag="stage:${esc(p.stage)}" title="${esc((p.stage_reasons || []).join(" · ") || "has everything we look for")}">${m[0]}</span>`;
 }
 function portCell(p) {
   const open = p.open_ports || [], exp = p.expected_ports || [];
@@ -483,13 +567,13 @@ function openDrawer(p) {
     const h = hmap[String(dep.name).toLowerCase()];
     if (h && h.current && h.latest && String(h.current) !== String(h.latest)) {
       oldN++;
-      return `<span class="dep-chip dep-old" title="installed ${esc(h.current)} · latest ${esc(h.latest)}">${esc(dep.name)} <span class="mono" style="opacity:.7">${esc(h.current)}</span> <span class="dep-arrow">→</span> <b>${esc(h.latest)}</b>
+      return `<span class="dep-chip dep-old tag-link" data-tag="dep:${esc(dep.name)}" title="installed ${esc(h.current)} · latest ${esc(h.latest)}">${esc(dep.name)} <span class="mono" style="opacity:.7">${esc(h.current)}</span> <span class="dep-arrow">→</span> <b>${esc(h.latest)}</b>
         <button class="mini-btn" data-upd-dep="${esc(dep.name)}" title="update ${esc(dep.name)} to ${esc(h.latest)} in this project">⬆</button></span>`;
     }
     if (h && h.current) { outN++; }
-    if (dep.kind === "dev") return `<span class="dep-chip dep-dev" title="${esc(dep.from)}">${esc(dep.name)}${dep.version ? " " + esc(dep.version) : ""}</span>`;
-    if (h && h.current) return `<span class="dep-chip dep-ok" title="up to date">${esc(dep.name)} <span class="mono" style="opacity:.7">${esc(h.current)}</span> ✓</span>`;
-    return `<span class="chip" title="${esc(dep.from)}">${esc(dep.name)}${dep.version ? "@" + esc(dep.version) : ""}</span>`;
+    if (dep.kind === "dev") return `<span class="dep-chip dep-dev tag-link" data-tag="dep:${esc(dep.name)}" title="${esc(dep.from)}">${esc(dep.name)}${dep.version ? " " + esc(dep.version) : ""}</span>`;
+    if (h && h.current) return `<span class="dep-chip dep-ok tag-link" data-tag="dep:${esc(dep.name)}" title="up to date">${esc(dep.name)} <span class="mono" style="opacity:.7">${esc(h.current)}</span> ✓</span>`;
+    return `<span class="chip tag-link" data-tag="dep:${esc(dep.name)}" title="${esc(dep.from)} · click: every project using ${esc(dep.name)}">${esc(dep.name)}${dep.version ? "@" + esc(dep.version) : ""}</span>`;
   }).join("");
   if (health && (outN || oldN)) health.stale = outN + " up to date · " + oldN + " outdated (of the " + deps.length + " declared)";
 
@@ -538,6 +622,11 @@ function openDrawer(p) {
     <div class="small muted" style="margin-top:6px">${fmtBytes(p.size)} · ${p.files_scanned || 0} files scanned · doc language: ${esc(p.doc_language || "n/a")}</div>
   </div>
   <div class="drawer-body">
+    <div class="panel" style="margin-top:14px"><h3>Stage ${stageBadge(p)} <span class="hint">found as: ${esc(p.why || "")}</span></h3>
+      ${(p.stage_reasons || []).length ? `<div class="small">Missing: ${p.stage_reasons.map(r => `<span class="chip">${esc(r)}</span>`).join("")}</div>` : `<div class="ok-box small">Runnable, described and in version control.</div>`}
+      ${p.parent ? `<div class="small" style="margin-top:6px">↳ inside <a href="#" class="proj-link" data-path="${esc(p.parent)}">${esc(p.parent.split(/[\\/]/).pop())}</a></div>` : ""}
+      ${(p.children || []).length ? `<div class="small" style="margin-top:6px">Contains: ${p.children.map(c => `<a href="#" class="proj-link chip" data-path="${esc(c)}">${esc(c.split(/[\\/]/).pop())}</a>`).join("")}</div>` : ""}
+    </div>
 
     <div class="panel" style="margin-top:14px"><h3>Purpose ${hint("purpose")}</h3>
       <div class="small">${esc(p.purpose || "unknown")}</div>
@@ -550,6 +639,9 @@ function openDrawer(p) {
         ${SWATCH_COLORS.map(c => `<span class="swatch ${metaOf(p).color === c ? "sel" : ""}" data-color="${c}" style="background:${c}" title="${c}"></span>`).join("")}
       </div>
       <div class="kv">
+        <div class="k">Category</div><div><input class="search-in" id="catIn" list="catList" value="${esc(metaOf(p).category || "")}" placeholder="e.g. client work, side project, learning" style="width:220px">
+          <datalist id="catList">${[...new Set((S.data.projects || []).map(x => metaOf(x).category).filter(Boolean).concat(["client work", "side project", "learning", "experiment", "work", "open source", "template"]))].map(c => `<option value="${esc(c)}">`).join("")}</datalist></div>
+        <div class="k">Tags</div><div><input class="search-in" id="tagsIn" value="${esc((metaOf(p).tags || []).join(", "))}" placeholder="comma separated" style="width:220px"></div>
         <div class="k">Rating</div><div>${starsHtml(p, true)}</div>
         <div class="k">Status</div><div>
           <select class="sel-inline" id="statusSel">
@@ -563,7 +655,7 @@ function openDrawer(p) {
       <textarea id="notesArea" class="notes-area" placeholder="e.g. uses the old DB password — rotate it. Talks to S3 via AWS key."> ${esc(metaOf(p).notes || "")}</textarea>
     </div>
 
-    <div class="panel"><h3>How to run ${hint("run")} <span class="hint">${esc(run.why || "")}</span></h3>
+    <div class="panel"><h3>How to run ${hint("run")} <span class="hint">${esc(run.why || "")}</span><span class="spacer"></span>${runBtn(p)}</h3>
       ${cmdBox(run.command)}
       ${(run.readme_cmds || []).length > 1 ? `<div class="small muted">other commands found in README:</div>${run.readme_cmds.slice(1, 5).map(c => cmdBox(c)).join("")}` : ""}
       ${run.pkg_manager ? `<div class="small muted" style="margin-top:6px">package manager: <b>${esc(run.pkg_manager)}</b></div>` : ""}
@@ -679,6 +771,17 @@ function openDrawer(p) {
     const rating = parseInt(st.dataset.star, 10);
     await saveMeta(p, { rating: metaOf(p).rating === rating ? 0 : rating });
     openDrawer(p); if (S.tab === "projects") renderProjects();
+  });
+  wireRunBtns($("#drawerBody"), () => openDrawer((S.data.projects || []).find(x => x.path === p.path) || p));
+  const catIn = $("#catIn");
+  if (catIn) catIn.onchange = async () => { await saveMeta(p, { category: catIn.value.trim() || null }); toast("category saved", "ok"); };
+  const tagsIn = $("#tagsIn");
+  if (tagsIn) tagsIn.onchange = async () => { await saveMeta(p, { tags: tagsIn.value.split(",").map(x => x.trim()).filter(Boolean) }); toast("tags saved", "ok"); };
+  if (window.transferPanel) transferPanel(p);
+  $$("#drawerBody .proj-link").forEach(a => a.onclick = e => {
+    e.preventDefault();
+    const q = (S.data.projects || []).find(x => x.path === a.dataset.path);
+    if (q) openDrawer(q);
   });
   $("#statusSel").onchange = async e => {
     if (e.target.value === "archived" && metaOf(p).status !== "archived") { e.target.value = metaOf(p).status; return archiveModal(p); }

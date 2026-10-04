@@ -35,6 +35,16 @@ carries an icon and a label, so colour is never the only cue.
 ![Radial](../../media/screenshots/14-lineage-radial.jpg)
 ![Flow](../../media/screenshots/15-lineage-flow.jpg)
 
+## Drill into a project
+
+![Lineage drill-down](../../media/screenshots/30-lineage-drill.jpg)
+
+Double-click a project (or **🔍 Drill in** in its info panel, or pick it in **Focus**) to see just that project with:
+its **folders sized** (bigger circle = more space; click one for **▤ open in Disk space**), the projects inside it or
+around it, the **network hosts** its code talks to, and the **agents** that worked on it (with session and token
+counts). **← all projects** goes back; double-click the project again to open its details. In the all-projects view,
+your **categories** appear as nodes that group their projects.
+
 ## Interacting
 
 - **Hover** a node: tooltip, and its neighbourhood lights up while everything else dims.

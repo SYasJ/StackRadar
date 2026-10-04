@@ -31,7 +31,7 @@
   "name": "StackRadar",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "macOS, Windows, Linux",
-  "softwareVersion": "2.1.0",
+  "softwareVersion": "2.2.0",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "description": "Free for personal, non-commercial use. Commercial use requires a paid license." },
   "license": "https://polyformproject.org/licenses/noncommercial/1.0.0/",
   "description": "A local developer-workspace dashboard: project discovery, run commands, ports, masked secrets, risk flags, lineage graph, live system monitor, AI agent detection, skill usage and duplicates, cron schedules, duplicate files and one-click package updates.",
@@ -138,10 +138,14 @@
         <div class="card"><div class="ic">📦</div><h3>Every project, explained</h3><p>Purpose, language, size, git origin and the exact command to run it, found automatically.</p></div>
         <div class="card"><div class="ic">🔑</div><h3>Leaked keys, masked</h3><p>OpenAI, Anthropic, AWS, Stripe, GitHub tokens and DB passwords, plus <code>.env</code> files git would commit.</p></div>
         <div class="card"><div class="ic">🛡</div><h3>Network Guard</h3><p>See every app that talks to the internet, bytes ↑ / ↓, the exact file and line, and allow or deny it. Low / Medium / Strict.</p></div>
-        <div class="card"><div class="ic">⇄</div><h3>Ports &amp; live runs</h3><p>What's listening right now, the ports each app should use, start / stop / restart on another port.</p></div>
+        <div class="card"><div class="ic">⇄</div><h3>Ports &amp; live runs</h3><p>Every listening port with its program and project, stop or force-kill it, and ▶ run any project from the list.</p></div>
+        <div class="card"><div class="ic">🧰</div><h3>Tools &amp; packages</h3><p>CLI tools, pip, npm, Homebrew and zsh plugins: version vs newest, last used, never used, what's new, update or remove.</p></div>
+        <div class="card"><div class="ic">⇢</div><h3>Hand off to another agent</h3><p>A project stalled? StackRadar writes a brief from the last session and starts Claude Code, Codex or Gemini with the model you pick.</p></div>
+        <div class="card"><div class="ic">🗄</div><h3>Caches &amp; disk space</h3><p>npm, pip, Homebrew, Xcode, Playwright and more with one-click clean, and every folder's size with drill-down.</p></div>
+        <div class="card"><div class="ic">🎨</div><h3>Light, dark, yours</h3><p>Light / dark / auto, seven presets, edit every color, import and export themes.</p></div>
         <div class="card"><div class="ic">✺</div><h3>Lineage graph</h3><p>Projects ↔ runtimes ↔ dependencies ↔ ports ↔ secrets ↔ agents ↔ skills ↔ schedules, in force, radial or flow layout.</p></div>
         <div class="card"><div class="ic">♥</div><h3>System load</h3><p>Live CPU per core, load average, memory, swap, disks, network and the heaviest processes.</p></div>
-        <div class="card"><div class="ic">🤖</div><h3>AI agents</h3><p>Claude Code, Codex, Hermes, OpenClaw, Paperclip and 14 more: sessions, MCP servers, tokens, running or not.</p></div>
+        <div class="card"><div class="ic">🤖</div><h3>AI agents</h3><p>Claude Code, Codex, Hermes, OpenClaw, Paperclip and 14 more: every session, tokens by model and by CLI / IDE / app, MCP servers, old processes to stop.</p></div>
         <div class="card"><div class="ic">✪</div><h3>Skills that matter</h3><p>Which skills and slash commands you actually use, which are never used, and which are duplicated across agents.</p></div>
         <div class="card"><div class="ic">⏰</div><h3>Schedules</h3><p>Repo crons, crontab, launchd, systemd timers, Task Scheduler and agent cron jobs, with next-run countdowns.</p></div>
         <div class="card"><div class="ic">⧉</div><h3>Duplicates &amp; space</h3><p>Hash-verified duplicate files, copied projects, reclaimable caches, and archived projects compressed into one verified file.</p></div>
@@ -199,7 +203,7 @@
 
     <section id="download" aria-labelledby="h-dl">
       <h2 id="h-dl">Download</h2>
-      <p class="sub">Current version <b>2.1.0</b>. Desktop builds bundle their own engine and keep themselves up to date.</p>
+      <p class="sub">Current version <b>2.2.0</b>. Desktop builds bundle their own engine and keep themselves up to date.</p>
       <table>
         <tr><th>OS</th><th>Get</th><th>Notes</th></tr>
         <tr><td>macOS (Apple silicon &amp; Intel)</td><td><a href="https://github.com/SYasJ/StackRadar/releases/latest">StackRadar-x.y.z-mac-arm64.dmg / -x64.dmg</a></td><td>First launch: System Settings → Privacy &amp; Security → <b>Open Anyway</b></td></tr>

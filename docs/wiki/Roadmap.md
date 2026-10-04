@@ -3,15 +3,16 @@
 Where StackRadar is today and where it's heading. Dates are targets, not promises. Ideas and votes are welcome as
 [issues](https://github.com/SYasJ/StackRadar/issues) (add a 👍 to the ones you want most).
 
-**Current version: 2.1.0** · [Changelog](https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md) · [Download](https://github.com/SYasJ/StackRadar/releases/latest)
+**Current version: 2.2.0** · [Changelog](https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md) · [Download](https://github.com/SYasJ/StackRadar/releases/latest)
 
 | | Version | Theme | Status |
 |---|---|---|---|
 | ✅ | 1.0 | See every project | Released 2026-09 |
 | ✅ | 2.0 | Desktop app, agents, skills, schedules, system | Released 2026-10 |
 | ✅ | 2.1 | Network Guard, rename, compressed archives | Released 2026-10 |
-| 🚧 | 2.2 | Trust & reach: signed builds, package managers, CLI | Next, Q4 2026 |
-| 🗺️ | 2.3 | Deeper Network Guard | Q1 2027 |
+| ✅ | 2.2 | Control centre: act on everything (ports, tools, caches, agents, skills, schedules, themes) | Released 2026-10 |
+| 🚧 | 2.3 | Trust & reach: signed builds, package managers, CLI | Next, Q4 2026 |
+| 🗺️ | 2.4 | Deeper Network Guard | Q1 2027 |
 | 💡 | 3.0 | StackRadar for your agents | 2027 |
 
 ---
@@ -46,16 +47,31 @@ Where StackRadar is today and where it's heading. Dates are targets, not promise
 
 ---
 
-## 🚧 Next: 2.2 "trust & reach" (Q4 2026)
+### 2.2: control centre
+- [x] Fixed: only one project showing (home folder treated as a project), plain git repos missed, no ports / speeds on macOS
+- [x] Scan progress with percent and time left; "still working" indicator on every slow action
+- [x] Nested projects, project stage (ready / in progress / incomplete), unfinished folders, categories and tags, ▶ Run on every row, click any tag to see where it's used
+- [x] Hand a stalled project or session to another agent and model (Claude Code, Codex, Gemini CLI, Aider, OpenCode)
+- [x] Strict duplicates (name + size + content), renamed copies and same-name look-alikes kept apart; sortable tables everywhere
+- [x] Ports tab with stop / force kill; Network Guard per-project levels, clickable details, KB / MB totals
+- [x] Tools & packages (versions, newest, last used, unused, update / remove, what's new); Caches and Disk space explorers
+- [x] Agents: sessions with hand off / tag / archive / delete, tokens by model and by CLI / IDE / app, processes with "stop all but newest"
+- [x] Skills: delete, share, consolidate duplicates into `~/.agents/skills`; Schedules: pause / resume / re-time / delete
+- [x] Lineage drill-down with folder sizes; light / dark / auto themes, presets, edit every color, import / export
+
+---
+
+## 🚧 Next: 2.3 "trust & reach" (Q4 2026)
 
 - [ ] **Signed and notarized builds**: Apple Developer ID + notarization (no more *Open Anyway*, silent auto-update on macOS), Windows signing via Azure Trusted Signing or an OV certificate (no SmartScreen warning)
 - [ ] **Package managers**: `brew install --cask stackradar`, `winget install StackRadar`, Flatpak / AUR
 - [ ] **Headless CLI**: `stackradar scan --json`, `stackradar secrets`, `stackradar net` for scripts and CI
 - [ ] **Scheduled scans + desktop notifications**: new secret committed, new app talking to an unknown host, disk filling up
-- [ ] **Light theme** and a compact layout for small screens
+- [ ] A compact layout for small screens
+- [ ] Cost estimates next to token counts, and alerts when an agent session runs away
 - [ ] Linux `arm64` builds (Raspberry Pi, ARM laptops)
 
-## 🗺️ Planned: 2.3 "deeper Network Guard" (Q1 2027)
+## 🗺️ Planned: 2.4 "deeper Network Guard" (Q1 2027)
 
 - [ ] **Per-app bytes on Windows** (ETW) so non-guarded apps show ↑ / ↓ like on macOS / Linux
 - [ ] **Per-app blocking without root on Linux** (cgroup / nftables per process) and an optional macOS Network Extension
@@ -78,11 +94,13 @@ Where StackRadar is today and where it's heading. Dates are targets, not promise
 
 | Area | Limitation | Planned fix |
 |---|---|---|
-| Install | Builds are unsigned: one-time *Open Anyway* (macOS) / *Run anyway* (Windows); macOS updates are a manual download | 2.2 signing |
-| Network Guard | Only apps started from StackRadar can be stopped per request; other apps are monitored, or blocked by IP at the OS firewall | 2.3 |
+| Install | Builds are unsigned: one-time *Open Anyway* (macOS) / *Run anyway* (Windows); macOS updates are a manual download | 2.3 signing |
+| Network Guard | Only apps started from StackRadar can be cut off per request; other apps are monitored, stopped, or blocked by IP at the OS firewall | 2.4 |
 | Network Guard | HTTPS contents are never inspected (by design): sensitive-data checks see plain HTTP and your source code | by design |
-| Windows | No per-app byte counts for apps not started from StackRadar | 2.3 ETW |
-| Updates | Global package updates cover npm, pip and Homebrew (not yet pnpm -g, cargo, gem) | 2.2 |
+| Windows | No per-app byte counts for apps not started from StackRadar | 2.4 ETW |
+| Agents | Sessions and tokens are read in detail for Claude Code and Codex; other agents show counts and folders only | as their log formats settle |
+| Tools | "Last used" comes from your shell history (zsh / bash / fish); tools started by apps or scripts don't show up there | — |
+| Themes | The network radar and lineage graph keep a dark "screen" in light mode | by design |
 
 ## How versions work
 

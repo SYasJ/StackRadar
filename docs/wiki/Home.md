@@ -1,6 +1,6 @@
 # StackRadar wiki
 
-> **Current version: 2.1.0** · [Download](https://github.com/SYasJ/StackRadar/releases/latest) · [Changelog](https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md)
+> **Current version: 2.2.0** · [Download](https://github.com/SYasJ/StackRadar/releases/latest) · [Changelog](https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md)
 >
 > StackRadar was called **DevRadar** until v2.1. The old name clashed with several other developer projects.
 
@@ -23,6 +23,10 @@ skills touched it, what runs on a schedule, where your disk space went, and whic
 
 ## Deep dives
 
+- [Ports](Ports.md): every listening port, stop / force kill
+- [Tools & packages](Tools-and-Packages.md): versions, newest versions, last used, unused, update / remove, what's new
+- [Caches & disk space](Caches-and-Disk-Space.md): tool caches with one-click clean, folder sizes with drill-down
+- [Themes](Themes.md): light / dark / auto, presets, every color
 - [Network Guard](Network-Guard.md): see what every app sends and receives, from which file, and allow / deny it (Low / Medium / Strict)
 - [Lineage graph](Lineage-Graph.md): how projects, runtimes, dependencies, ports, secrets, agents, skills and schedules connect
 - [AI agents & skills](AI-Agents-and-Skills.md): Claude Code, Codex, Hermes, OpenClaw, Paperclip and more, plus skill usage and duplicates

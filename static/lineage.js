@@ -23,8 +23,11 @@ const NODE_TYPES = {
   key:      { c: "#e66767", icon: "🔑", label: "secrets" },
   vcs:      { c: "#8b97ad", icon: "⎇", label: "origin / VCS" },
   schedule: { c: "#a7b0c0", icon: "⏰", label: "schedule" },
+  folder:   { c: "#6f7f9c", icon: "▤", label: "folder (size)" },
+  host:     { c: "#39c5e0", icon: "🌐", label: "network host" },
+  category: { c: "#fab219", icon: "🗂", label: "category" },
 };
-const COLUMN_OF = { vcs: 0, ai: 0, llm: 0, project: 1, env: 2, skill: 2, schedule: 2, dep: 3, port: 4, key: 4 };
+const COLUMN_OF = { vcs: 0, ai: 0, llm: 0, category: 0, project: 1, env: 2, skill: 2, schedule: 2, folder: 2, dep: 3, host: 3, port: 4, key: 4 };
 // kept for code that still reads these names
 const NODE_COLORS = Object.fromEntries(Object.entries(NODE_TYPES).map(([k, v]) => [k, v.c]));
 const NODE_LABELS = Object.fromEntries(Object.entries(NODE_TYPES).map(([k, v]) => [k, v.label]));
@@ -83,6 +86,27 @@ function buildGraph(focus) {
     (K.skills || []).filter(s => (s.used_in || []).includes(p.name) && !seen.has(s.name) && seen.add(s.name))
       .slice(0, focus === "all" ? 3 : 10)
       .forEach(s => link(pn, add("skill:" + s.name, "skill", s.name, { uses: s.uses, agent: s.agent, desc: s.description }, 8 + Math.min(6, Math.sqrt(s.uses || 0))), (s.uses || 0) + "×", "skill"));
+    const cat = (p.meta || {}).category;
+    if (cat && focus === "all") link(add("cat:" + cat, "category", cat, {}, 13), pn, "", "category");
+    if (focus !== "all") {
+      // drill-down: folders with their size, nested projects, network hosts the code talks to
+      const total = Math.max(1, p.size || 1);
+      (p.size_breakdown || []).filter(b => b.size > 0).slice(0, 10).forEach(b => {
+        const r = 6 + Math.min(16, 22 * Math.sqrt(b.size / total));
+        link(pn, add("dir:" + p.path + "/" + b.name, "folder", b.name + (b.dir ? "/" : "") + " · " + fmtBytes(b.size), { size: b.size, path: p.path + "/" + b.name, dir: b.dir }, r), fmtBytes(b.size), "folder");
+      });
+      const kids = (p.children || []).map(c => P.find(x => x.path === c)).filter(Boolean);
+      kids.forEach(k => { const kn = add("proj:" + k.path, "project", k.name, { p: k }, 12); kn.color = NODE_TYPES.project.c; link(pn, kn, "contains", "nested"); });
+      const par = p.parent && P.find(x => x.path === p.parent);
+      if (par) { const pp = add("proj:" + par.path, "project", par.name, { p: par }, 13); pp.color = NODE_TYPES.project.c; link(pp, pn, "contains", "nested"); }
+      const hosts = new Map();
+      (p.net_refs || []).forEach(r => { if (!hosts.has(r.host)) hosts.set(r.host, r); });
+      [...hosts.values()].slice(0, 12).forEach(r => link(pn, add("host:" + r.host, "host", r.host, { file: r.file, line: r.line, risk: r.risk, service: r.service }, 8), r.service || "", "host"));
+      (S.data.agents || []).forEach(a => {
+        const ss = (a.session_list || []).filter(x => x.cwd && (x.cwd === p.path || x.cwd.startsWith(p.path + "/")));
+        if (ss.length) link(add("ai:" + a.name, "ai", a.name, { full: a.name, sessions: ss.length, out: ss.reduce((t, x) => t + (x.out || 0), 0) }, 11), pn, ss.length + " sessions", "ai");
+      });
+    }
   });
   // shared nodes grow with the number of projects that use them
   nodes.forEach(n => { if (n.type !== "project" && n.deg > 1) n.r = Math.min(n.r + (n.deg - 1) * 2.5, 22); });
@@ -258,7 +282,11 @@ function graphInit() {
     const r = canvas.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
     G.tf.x = mx - (mx - G.tf.x) * (k2 / G.tf.k); G.tf.y = my - (my - G.tf.y) * (k2 / G.tf.k); G.tf.k = k2;
   }, { passive: false });
-  canvas.addEventListener("dblclick", e => { const nd = pickNode(e); if (nd && nd.type === "project") openDrawer(nd.meta.p); });
+  canvas.addEventListener("dblclick", e => {
+    const nd = pickNode(e);
+    if (nd && nd.type === "project") { if (S.line === nd.meta.p.path) openDrawer(nd.meta.p); else drillInto(nd.meta.p.path); }
+    else if (nd && nd.type === "category") { $("#gSearch").value = ""; G.search = ""; }
+  });
 
   $("#pngBtn").onclick = exportPNG;
   $("#jsonBtn").onclick = () => {
@@ -317,7 +345,10 @@ function nodeExtra(nd) {
     case "vcs": return m.remote || "";
     case "skill": return `${m.uses || 0} uses · ${m.agent || ""}`;
     case "schedule": return `${m.kind} · ${m.expr || ""}`;
-    case "ai": return m.full || "";
+    case "ai": return (m.full || "") + (m.sessions ? ` · ${m.sessions} sessions · ${fmtNum(m.out)} tokens out` : "");
+    case "folder": return fmtBytes(m.size) + (m.dir ? " folder" : " file");
+    case "host": return (m.service || "") + (m.file ? " · " + m.file + (m.line ? ":" + m.line : "") : "");
+    case "category": return `${nd.deg} project${nd.deg > 1 ? "s" : ""}`;
     default: return `linked to ${nd.deg} project${nd.deg > 1 ? "s" : ""}`;
   }
 }
@@ -343,7 +374,12 @@ function selectNode(nd) {
   if (nd.type === "project") {
     body += `<div class="small"><span class="path">${esc(m.p.path)}</span></div>
       <div class="small" style="margin-top:6px">${m.p.key_count || 0} secrets · ${(m.p.dependencies || []).length} deps · ${(m.p.schedules || []).length} schedules</div>
-      <button class="btn small" style="margin-top:8px" id="niOpen">open details →</button>`;
+      <div class="small">${fmtBytes(m.p.size)} on disk${(m.p.children || []).length ? ` · contains ${m.p.children.length} project(s)` : ""}</div>
+      <div class="pill-row" style="margin-top:8px">${S.line !== m.p.path ? `<button class="btn primary small" id="niDrill">🔍 Drill in</button>` : ""}<button class="btn small" id="niOpen">open details →</button><button class="btn small" id="niDisk">▤ folder sizes</button></div>`;
+  } else if (nd.type === "folder") {
+    body += `<div class="small mono">${esc(m.path)}</div><div class="pill-row" style="margin-top:8px"><button class="btn small" id="niDiskF">▤ open in Disk space</button><button class="btn small" id="niRev">📂 show</button></div>`;
+  } else if (nd.type === "host") {
+    body += `<div class="small">${m.file ? `referenced in <span class="mono">${esc(m.file)}${m.line ? ":" + m.line : ""}</span>` : ""}${m.risk && m.risk !== "low" ? ` · <span class="sev-${m.risk === "high" ? "high" : "medium"}">${esc(m.risk)} risk</span>` : ""}</div>`;
   } else if (nd.type === "skill" && m.desc) {
     body += `<div class="small muted">${esc(m.desc)}</div>`;
   }
@@ -353,6 +389,10 @@ function selectNode(nd) {
   }
   info.innerHTML = body;
   const b = $("#niOpen"); if (b) b.onclick = () => openDrawer(m.p);
+  const dr = $("#niDrill"); if (dr) dr.onclick = () => drillInto(m.p.path);
+  const dk = $("#niDisk"); if (dk && typeof DK !== "undefined") dk.onclick = () => { DK.path = m.p.path; S.tab = "disk"; render(); };
+  const dkf = $("#niDiskF"); if (dkf && typeof DK !== "undefined") dkf.onclick = () => { DK.path = m.dir ? m.path : m.path.replace(/[\\/][^\\/]*$/, ""); S.tab = "disk"; render(); };
+  const rv = $("#niRev"); if (rv) rv.onclick = () => revealPath(m.path);
   $$("#nodeInfo [data-nid]").forEach(c => c.onclick = () => { const x = G.byId.get(c.dataset.nid); if (x) { selectNode(x); G.target = { k: G.tf.k, x: G.W / 2 - x.x * G.tf.k, y: G.H / 2 - x.y * G.tf.k }; } });
 }
 
@@ -517,6 +557,22 @@ function exportPNG() {
   toast("lineage saved as PNG", "ok");
 }
 
+function drillInto(path) {
+  S.line = path;
+  const sel = $("#lineageSel"); if (sel) sel.value = path;
+  buildGraph(path); updateLineageCrumb();
+}
+function updateLineageCrumb() {
+  let c = $("#lineageCrumb");
+  if (!c) { c = document.createElement("div"); c.id = "lineageCrumb"; c.className = "lineage-crumb"; const w = $(".lineage-wrap"); if (w) w.appendChild(c); }
+  const p = (S.data.projects || []).find(x => x.path === S.line);
+  c.hidden = !p;
+  if (p) {
+    c.innerHTML = `<button class="btn small" id="lcBack">← all projects</button> <b>${esc(p.name)}</b> <span class="muted small">${fmtBytes(p.size)} · double-click a project to drill in, again to open it</span>`;
+    $("#lcBack").onclick = () => { S.line = "all"; $("#lineageSel").value = "all"; buildGraph("all"); updateLineageCrumb(); };
+  }
+}
+window.drillInto = drillInto;
 function renderLineage() {
   requestAnimationFrame(graphFit);
   const P = S.data.projects || [];
@@ -524,13 +580,13 @@ function renderLineage() {
   sel.innerHTML = `<option value="all">all projects (${P.length})</option>` + P.map(p => `<option value="${esc(p.path)}">${esc(p.name)}</option>`).join("");
   if (S.line !== "all" && !P.some(p => p.path === S.line)) S.line = "all";
   sel.value = S.line;
-  sel.onchange = () => { S.line = sel.value; buildGraph(S.line); };
+  sel.onchange = () => { S.line = sel.value; buildGraph(S.line); updateLineageCrumb(); };
   if (typeof SETTINGS !== "undefined") {
     G.layout = SETTINGS.lineage_layout || G.layout; G.motion = SETTINGS.lineage_motion !== false;
     $$("#layoutSeg button").forEach(x => x.classList.toggle("active", x.dataset.layout === G.layout));
     $("#motionToggle").checked = G.motion;
   }
   const lh = $("#lineageHint"); if (lh) lh.innerHTML = window.tabHint ? tabHint("lineage") : "";
-  requestAnimationFrame(() => { graphFit(); buildGraph(S.line); });
+  requestAnimationFrame(() => { graphFit(); buildGraph(S.line); updateLineageCrumb(); });
 }
 RENDERERS.lineage = renderLineage;

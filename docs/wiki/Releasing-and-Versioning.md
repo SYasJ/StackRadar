@@ -39,7 +39,7 @@ Preview the notes locally with `python3 scripts/release_notes.py -o /tmp/notes.m
 
 **MAJOR.MINOR.PATCH** ([SemVer](https://semver.org/)): patch = fixes, minor = features, major = breaking changes.
 The version shows up in the window title, **Help → About StackRadar**, Settings / Updates in the UI,
-`python3 stackradar.py --version`, the file names (`StackRadar-2.1.0-…`) and the release title. What's planned for
+`python3 stackradar.py --version`, the file names (`StackRadar-2.2.0-…`) and the release title. What's planned for
 each version is in the [roadmap](Roadmap.md).
 
 You can also run the workflow manually (**Actions → StackRadar Release → Run workflow**) to get the installers as build

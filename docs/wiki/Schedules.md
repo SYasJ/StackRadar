@@ -32,3 +32,19 @@ System schedules are linked to a project when their command or working directory
 
 Type any expression (`0 9 * * 1-5`, `*/15 * * * *`, `@daily`, 6-field with seconds …) to see it in words and its next
 five run times. The same parser powers the table (`/api/cron/preview?expr=…`).
+
+## Pause, change or delete a schedule
+
+Every row on this machine has **⏸ pause / ▶ resume**, **✎ change timing** and **🗑 delete**:
+
+| Source | Pause | Change timing | Delete |
+|---|---|---|---|
+| crontab | comments the line out (`#[stackradar-paused]`) | new cron expression | removes the line |
+| launchd | `launchctl unload -w` | `StartCalendarInterval` from a cron (numbers / `*`) or `every 15m` | unload + plist to the Trash |
+| systemd user timer | `systemctl --user disable --now` | new `OnCalendar=` value, then reload | disable + timer to the Trash |
+| Task Scheduler | `schtasks /Change /DISABLE` | opens Task Scheduler | `schtasks /Delete` |
+| OpenClaw / Hermes jobs | `enabled: false` | new cron expression | removes the job |
+| Cron in a repo file | — (edit the file) | replaces the expression in the file (commit and push it) | — |
+
+A new cron expression is checked and shown in words with its next runs before it's saved. **Every change first saves a
+backup** in `~/.stackradar/backups/`.

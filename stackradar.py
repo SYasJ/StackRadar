@@ -32,6 +32,7 @@ Usage:
 
 import argparse
 import concurrent.futures
+import getpass
 import hashlib
 import secrets as secretsmod
 import glob as globmod
@@ -135,9 +136,11 @@ def read_head(path, limit=MAX_READ_BYTES):
 
 
 def walk_files(root, cap_files=MAX_DETAIL_FILES, cap_bytes=4_000_000,
-               include_hidden=True, skip_dirs=None):
-    """Collect file paths under root, pruning big dep dirs. Returns (paths, truncated)."""
+               include_hidden=True, skip_dirs=None, skip_paths=None):
+    """Collect file paths under root, pruning big dep dirs (and the folders in skip_paths, e.g. nested
+    projects that are scanned on their own). Returns (paths, truncated)."""
     skip = set(skip_dirs or ()) | CONTENT_SKIP_DIRS | {".git"}
+    skip_p = set(skip_paths or ())
     out, files, total = [], 0, 0
     truncated = False
     stack = [root]
@@ -155,7 +158,7 @@ def walk_files(root, cap_files=MAX_DETAIL_FILES, cap_bytes=4_000_000,
                 if e.is_symlink():
                     continue
                 if e.is_dir(follow_symlinks=False):
-                    if name in skip:
+                    if name in skip or e.path in skip_p:
                         continue
                     stack.append(e.path)
                 elif e.is_file(follow_symlinks=False):
@@ -668,7 +671,7 @@ def get_listeners_linux():
                     pid = int(pm.group(1))
                 if nm:
                     proc = nm.group(1)
-                out.append({"port": port, "pid": pid, "proc": proc})
+                out.append({"port": port, "pid": pid, "proc": proc, "addr": m.group(1).strip("[]")})
             if out:
                 return out
     # /proc fallback
@@ -685,7 +688,8 @@ def get_listeners_linux():
                     port = int(parts[1].split(":")[1], 16)
                 except Exception:
                     continue
-                inodes[parts[10]] = {"port": port, "pid": None, "proc": None}
+                # columns: sl local rem st tx:rx tr:tm retrnsmt uid timeout inode
+                inodes[parts[9]] = {"port": port, "pid": None, "proc": None, "addr": _hex_addr(parts[1])[0]}
         for pid in os.listdir("/proc"):
             if not pid.isdigit():
                 continue
@@ -711,35 +715,57 @@ def get_listeners_linux():
 
 
 def get_listeners_mac():
-    out = []
-    ok, text = run_cmd(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpnt"], timeout=15)
-    if not ok:
+    """lsof -F output: 'p<pid>' starts a process, 'c<command>' names it, each 'n<addr>' is one listening
+    socket (we ask lsof for LISTEN sockets only, so every n line with a port is a listener)."""
+    out, seen = [], set()
+    ok, text = run_cmd(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"], timeout=15)
+    if not text:
         return out
-    cur = {}
+    pid, proc = None, None
     for line in text.splitlines():
-        if line.startswith("n"):
-            m = re.search(r":(\d+)\s*\(LISTEN\)", line)
-            if m:
-                cur["port"] = int(m.group(1))
-        elif line.startswith("p"):
-            cur["pid"] = int(line[1:])
-        elif line.startswith("c"):
-            cur["proc"] = line[1:]
-        elif line.startswith("/"):
-            cur["name"] = line[1:]
-        elif line.startswith("a"):
-            if "port" in cur:
-                out.append({"port": cur["port"], "pid": cur.get("pid"),
-                            "proc": cur.get("proc") or cur.get("name")})
-            cur = {}
+        if not line:
+            continue
+        tag, val = line[0], line[1:]
+        if tag == "p":
+            try:
+                pid = int(val)
+            except ValueError:
+                pid = None
+            proc = None
+        elif tag == "c":
+            proc = val
+        elif tag == "n":
+            m = re.search(r"^(.*):(\d+)(?:\s|$)", val)
+            if m and pid:
+                port = int(m.group(2))
+                if (port, pid) in seen:
+                    continue          # same socket on IPv4 + IPv6
+                seen.add((port, pid))
+                out.append({"port": port, "pid": pid, "proc": proc, "addr": m.group(1).strip("[]")})
     return out
 
 
+def _windows_proc_names():
+    names = {}
+    ok, text = run_cmd(["tasklist", "/fo", "csv", "/nh"], timeout=10)
+    for line in (text or "").splitlines():
+        cols = [c.strip('"') for c in line.split('","')]
+        if len(cols) >= 2:
+            try:
+                names[int(cols[1])] = cols[0].strip('"')
+            except ValueError:
+                pass
+    return names
+
+
 def get_listeners_windows():
-    out = []
-    ok, text = run_cmd(["netstat", "-ano"], timeout=10)
+    out, seen = [], set()
+    ok, text = run_cmd(["netstat", "-ano", "-p", "TCP"], timeout=10)
+    if not ok:
+        ok, text = run_cmd(["netstat", "-ano"], timeout=10)
     if not ok:
         return out
+    names = None
     for line in text.splitlines():
         if "LISTENING" in line:
             parts = line.split()
@@ -747,9 +773,15 @@ def get_listeners_windows():
                 m = re.match(r"^(.*):(\d+)$", parts[1])
                 if m:
                     try:
-                        out.append({"port": int(m.group(2)), "pid": int(parts[-1]), "proc": None})
+                        port, pid = int(m.group(2)), int(parts[-1])
                     except Exception:
-                        pass
+                        continue
+                    if (port, pid) in seen:
+                        continue
+                    seen.add((port, pid))
+                    if names is None:
+                        names = _windows_proc_names()
+                    out.append({"port": port, "pid": pid, "proc": names.get(pid), "addr": m.group(1).strip("[]")})
     return out
 
 
@@ -1160,10 +1192,12 @@ def detect_code_ports(root, files, cap=400):
 # ---------------------------------------------------------------------------
 
 MANIFEST_FILES = {
-    "package.json", "pyproject.toml", "requirements.txt", "requirements.in",
+    "package.json", "pyproject.toml", "requirements.txt", "requirements.in", "Pipfile",
     "setup.py", "setup.cfg", "Cargo.toml", "go.mod", "Gemfile", "pom.xml",
     "build.gradle", "build.gradle.kts", "composer.json", "mix.exs", "Package.swift",
-    "*.csproj", "*.sln", "CMakeLists.txt",
+    "*.csproj", "*.sln", "CMakeLists.txt", "pubspec.yaml", "deno.json", "deno.jsonc",
+    "project.godot", "*.xcodeproj", "*.xcworkspace", "environment.yml", "Project.toml",
+    "DESCRIPTION", "stack.yaml", "*.cabal", "build.sbt", "*.uproject", "*.unity",
 }
 GIT_DIRS = {".git", ".hg", ".svn"}
 IDE_DIRS = {".vscode", ".idea", ".cursor", ".windsurf", ".claude", ".gemini", ".cline",
@@ -1171,42 +1205,64 @@ IDE_DIRS = {".vscode", ".idea", ".cursor", ".windsurf", ".claude", ".gemini", ".
 ENTRY_FILES = {"app.py", "main.py", "server.py", "index.js", "main.js", "app.js",
                "main.go", "main.rs", "index.ts", "main.ts", "Program.cs", "main.rb",
                "manage.py", "run.py", "start.py", "index.html", "App.java"}
-VIBE_FILES = {"CLAUDE.md", ".cursorrules", "cursorrules"}
+VIBE_FILES = {"CLAUDE.md", ".cursorrules", "cursorrules", "AGENTS.md", "GEMINI.md"}
+README_FILES = {"README.md", "README", "README.txt", "README.rst", "readme.md", "Readme.md"}
+DEPLOY_FILES = {"vercel.json", "netlify.toml", "fly.toml", "render.yaml", "Procfile", "app.yaml", "wrangler.toml", ".replit"}
+# folders that are never projects themselves (still sized and searched below)
+HOME_CONTAINER_DIRS = {"Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music", "Videos", "Public",
+                       "Dropbox", "OneDrive", "iCloud Drive", "Google Drive", "Projects", "projects", "Developer",
+                       "dev", "Dev", "code", "Code", "src", "repos", "Repos", "git", "GitHub", "github", "work", "Work",
+                       "Sites", "workspace", "Workspace", "sandbox", "playground", "tmp", "temp"}
+# trees where package manifests are installed copies, not your projects
+NO_PROJECT_DIRS = {"vendor", "Pods", "bower_components", "DerivedData", "site-packages", "dist-packages",
+                   "Caches", "CachedData", "extensions"}
+NO_PROJECT_HOME_DIRS = {"Library", "AppData", "Applications", "snap", "Applications (Parallels)"}
+# inside a project, these hold fixtures / samples, not separate projects
+FIXTURE_DIRS = {"test", "tests", "__tests__", "fixtures", "__fixtures__", "testdata", "test-data", "templates",
+                "template", "e2e", "spec", "__mocks__", "mocks", "snapshots", "__snapshots__"}
+
+
+def _src_count(entries):
+    return sum(1 for n in entries if os.path.splitext(n)[1].lower() in SOURCE_EXTS)
 
 
 def is_candidate(entries, dirpath):
+    """Return (is_project, why, strength). strength 'strong' = repo / manifest, 'weak' = looks like code."""
     names = set(entries)
     if names & GIT_DIRS:
-        return True, "version-control repo"
+        return True, "version-control repo", "strong"
     for m in MANIFEST_FILES:
-        if "*" in m:
-            pre = m[:-2]
-            if any(n.startswith(pre) for n in names):
-                return True, "manifest " + m
+        if m.startswith("*"):
+            if any(n.endswith(m[1:]) for n in names):
+                return True, "manifest " + m, "strong"
         elif m in names:
-            return True, "manifest " + m
+            return True, "manifest " + m, "strong"
+    n_src = _src_count(entries)
     if names & {"Dockerfile", "dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml"}:
-        srcs = [n for n in entries if os.path.splitext(n)[1].lower() in SOURCE_EXTS or n in ENTRY_FILES]
-        if srcs:
-            return True, "docker project"
+        if n_src or names & ENTRY_FILES:
+            return True, "docker project", "strong"
+    if names & DEPLOY_FILES and (n_src or "index.html" in names):
+        return True, "deployable app", "strong"
     if names & IDE_DIRS or names & VIBE_FILES:
-        has_src = any(os.path.splitext(n)[1].lower() in SOURCE_EXTS for n in entries)
-        if has_src:
-            return True, "IDE/AI workspace"
-    # config file + code => app
+        if n_src:
+            return True, "IDE / AI workspace", "weak"
     cfg_files = {"config.ini", "settings.ini", "config.yaml", "config.yml", "config.json",
-                 "settings.json", "app.conf", "setup.cfg", "application.properties"}
-    if names & cfg_files:
-        n_src = sum(1 for n in entries if os.path.splitext(n)[1].lower() in SOURCE_EXTS)
-        if n_src >= 1:
-            return True, "config + code app"
-    # script / mini app: entry + a couple of source files, no manifest
-    if not any(n in names for n in MANIFEST_FILES if "*" not in n):
-        if names & ENTRY_FILES:
-            n_src = sum(1 for n in entries if os.path.splitext(n)[1].lower() in SOURCE_EXTS)
-            if n_src >= 2:
-                return True, "script / mini-app"
-    return False, None
+                 "settings.json", "app.conf", "application.properties", ".env", ".env.example"}
+    if names & cfg_files and n_src >= 1:
+        return True, "config + code app", "weak"
+    if names & ENTRY_FILES and n_src >= 2:
+        return True, "script / mini-app", "weak"
+    if "index.html" in names and any(n.endswith((".css", ".js")) for n in names):
+        return True, "static website", "weak"
+    if any(n.endswith(".ipynb") for n in names):
+        return True, "notebooks", "weak"
+    if names & {"Makefile", "makefile", "justfile", "Taskfile.yml"} and n_src:
+        return True, "make project", "weak"
+    if names & README_FILES and n_src >= 1:
+        return True, "unfinished project (README + code)", "weak"
+    if n_src >= 3:
+        return True, "loose code (unfinished?)", "weak"
+    return False, None, None
 
 
 def _depth_of(dirpath, root):
@@ -1214,14 +1270,59 @@ def _depth_of(dirpath, root):
     return 0 if rel == "." else len(rel.split(os.sep))
 
 
+SCAN_STATS_FILE = os.path.join(os.path.expanduser("~/.stackradar"), "scan-stats.json")
+
+
+def _scan_stats():
+    try:
+        with open(SCAN_STATS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_scan_stats(patch):
+    st = _scan_stats()
+    st.update(patch)
+    try:
+        os.makedirs(os.path.dirname(SCAN_STATS_FILE), exist_ok=True)
+        with open(SCAN_STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+    except Exception:
+        pass
+
+
+def _no_project_zone(rel_parts, root_is_home=False):
+    """True if a path (relative to the scan root) sits where installed copies live, not your projects."""
+    if root_is_home and rel_parts and rel_parts[0] in NO_PROJECT_HOME_DIRS:
+        return True
+    for i, part in enumerate(rel_parts):
+        if part.startswith(".") or part in NO_PROJECT_DIRS or part in CONTENT_SKIP_DIRS:
+            return True
+        if part == "pkg" and i + 1 < len(rel_parts) and rel_parts[i + 1] == "mod":   # Go module cache
+            return True
+    return False
+
+
 def discover_projects(root, max_depth, skip_top, progress):
-    """Walk the tree; return (projects, subtree-size map)."""
-    dirsize = {}   # dirpath -> size of files directly in it (incl. pruned child dirs)
+    """One walk of the tree: sizes every folder and finds every project, including projects inside
+    folders that are projects themselves (repos in a code folder, packages in a monorepo, nested repos).
+    Returns (projects, subtree-size map). Each project has 'parent' (path or None) and 'strength'."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    root_real = os.path.realpath(root)
+    dirsize = {}
     n_dirs = 0
+    found = {}            # path -> project dict
+    expect = (_scan_stats().get("dirs") or {}).get(root_real)
+    try:
+        top = sorted(e.name for e in os.scandir(root) if e.is_dir(follow_symlinks=False))
+    except Exception:
+        top = []
+    top_index = {n: i for i, n in enumerate(top)}
 
     def _prune(dirpath, dirnames, depth):
         keep = []
-        for d in dirnames:
+        for d in sorted(dirnames):
             dp = os.path.join(dirpath, d)
             if d in CONTENT_SKIP_DIRS:
                 try:
@@ -1235,15 +1336,33 @@ def discover_projects(root, max_depth, skip_top, progress):
             keep.append(d)
         dirnames[:] = keep
 
+    def _parent_project(dirpath):
+        d = os.path.dirname(dirpath)
+        while d and len(d) >= len(root):
+            if d in found:
+                return found[d]
+            nd = os.path.dirname(d)
+            if nd == d:
+                break
+            d = nd
+        return None
+
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
         depth = _depth_of(dirpath, root)
         if depth > max_depth:
             dirnames[:] = []
             continue
+        all_names = filenames + dirnames      # before pruning: .git is pruned but marks a repo
         _prune(dirpath, dirnames, depth)
         n_dirs += 1
-        if progress:
+        if progress is not None:
             progress["dirs"] = n_dirs
+            if depth >= 1 and top:
+                first = os.path.relpath(dirpath, root).split(os.sep)[0]
+                if first in top_index:
+                    progress["walk_top"] = (top_index[first], len(top))
+            if expect:
+                progress["walk_expect"] = expect
         for fn in filenames:
             try:
                 st = os.lstat(os.path.join(dirpath, fn))
@@ -1252,42 +1371,45 @@ def discover_projects(root, max_depth, skip_top, progress):
             if st.st_size > 0:
                 dirsize[dirpath] = dirsize.get(dirpath, 0) + st.st_size
 
-    # accumulate direct sizes up the tree (deepest first)
+        rel = os.path.relpath(dirpath, root)
+        rel_parts = [] if rel == "." else rel.split(os.sep)
+        if _no_project_zone(rel_parts, root_real == home):
+            continue
+        if os.path.realpath(dirpath) == home:
+            continue          # your home folder is where projects live, not a project
+        ok, why, strength = is_candidate(all_names, dirpath)
+        if not ok:
+            continue
+        if depth == 0 and strength != "strong":
+            continue          # the folder you scan is a project only if it is a repo / has a manifest
+        base = os.path.basename(dirpath.rstrip(os.sep))
+        if base in HOME_CONTAINER_DIRS and strength == "weak":
+            continue
+        parent = _parent_project(dirpath)
+        if parent is not None:
+            # inside another project: only real sub-projects count (own repo or manifest), not fixtures
+            if strength != "strong":
+                continue
+            inner = os.path.relpath(dirpath, parent["path"]).split(os.sep)
+            if any(x in FIXTURE_DIRS for x in inner):
+                continue
+        found[dirpath] = {"path": dirpath, "why": why, "strength": strength, "root": root, "rel": rel,
+                          "parent": parent["path"] if parent else None}
+        if parent is not None:
+            parent.setdefault("children", []).append(dirpath)
+
     subtree = dict(dirsize)
     for d in sorted(dirsize, key=len, reverse=True):
         p = os.path.dirname(d)
-        if p and p != d:
+        if p and p != d and len(p) >= len(root):
             subtree[p] = subtree.get(p, 0) + subtree.get(d, 0)
-
-    # detect candidates (second cheap walk, same pruning rules)
     projects = []
-    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
-        depth = _depth_of(dirpath, root)
-        if depth > max_depth:
-            dirnames[:] = []
-            continue
-        _prune(dirpath, dirnames, depth)
-        ok, why = is_candidate(set(filenames) | set(dirnames), dirpath)
-        if ok:
-            base = os.path.basename(dirpath.rstrip(os.sep))
-            if base in CONTENT_SKIP_DIRS:
-                continue
-            if base.startswith(".") and base not in {".claude", ".cursor"}:
-                continue
-            rel = os.path.relpath(dirpath, root)
-            projects.append({"path": dirpath, "why": why, "size": subtree.get(dirpath, 0),
-                             "root": root, "rel": rel})
-            # keep project boundaries flat: don't look for nested projects
-            dirnames[:] = []
-
-    # dedupe nested (keep shallowest)
-    projects.sort(key=lambda p: (len(p["path"]), p["path"]))
-    deduped = []
-    for p in projects:
-        if any(p["path"].startswith(q["path"] + os.sep) for q in deduped):
-            continue
-        deduped.append(p)
-    return deduped, subtree
+    for path, pr in found.items():
+        pr["size"] = subtree.get(path, 0)
+        projects.append(pr)
+    projects.sort(key=lambda p: p["path"])
+    _save_scan_stats({"dirs": {**(_scan_stats().get("dirs") or {}), root_real: n_dirs}})
+    return projects, subtree
 
 
 # ---------------------------------------------------------------------------
@@ -1301,7 +1423,7 @@ def analyze_project(proj, scan_ctx):
     p["id"] = re.sub(r"[^A-Za-z0-9_-]", "-", root)
     p["name"] = base
 
-    files, truncated = walk_files(root)
+    files, truncated = walk_files(root, skip_paths=proj.get("children"))
     p["files_scanned"] = len(files)
 
     # languages
@@ -1357,7 +1479,7 @@ def analyze_project(proj, scan_ctx):
     breakdown = []
     try:
         with os.scandir(root) as it:
-            for e in sorted(it, key=lambda x: x.name)[:60]:
+            for e in sorted(it, key=lambda x: x.name)[:400]:
                 if e.name in CONTENT_SKIP_DIRS:
                     sz, _ = fast_dir_size(e.path)
                 else:
@@ -1378,6 +1500,19 @@ def analyze_project(proj, scan_ctx):
 
     # git
     p["git"] = scan_git(root)
+    if not p["git"]["vcs"] and proj.get("parent"):
+        # a package inside a monorepo is tracked by the parent repo
+        d = os.path.dirname(root)
+        while d and len(d) >= len(proj.get("root") or "/"):
+            if os.path.isdir(os.path.join(d, ".git")):
+                g = scan_git(d)
+                g["vcs"], g["inherited_from"] = "Git (parent repo)", d
+                p["git"] = g
+                break
+            nd = os.path.dirname(d)
+            if nd == d:
+                break
+            d = nd
 
     # dependencies
     deps = []
@@ -1565,8 +1700,30 @@ def analyze_project(proj, scan_ctx):
     p["history_ts"] = h_ts
     p["last_run_ts"] = max(filter(None, [activity, h_ts]), default=None)
     p["last_run_label"] = None  # filled after process scan
-
+    p["stage"], p["stage_reasons"] = project_stage(p)
     return p
+
+
+def project_stage(p):
+    """'ready' (runnable, described, tracked) / 'in progress' / 'incomplete' plus the reasons, so unfinished
+    work is easy to find."""
+    missing = []
+    n_src = sum(n for _, n in (p.get("languages") or []))
+    if not (p.get("run") or {}).get("command"):
+        missing.append("no run command found")
+    if not p.get("has_readme"):
+        missing.append("no README")
+    if not (p.get("git") or {}).get("vcs"):
+        missing.append("not in version control")
+    elif (p.get("git") or {}).get("commit_count") is not None and p["git"]["commit_count"] < 3:
+        missing.append("fewer than 3 commits")
+    if n_src < 5:
+        missing.append("only %d source file%s" % (n_src, "" if n_src == 1 else "s"))
+    if p.get("strength") == "weak":
+        missing.append("no manifest (package.json, pyproject …)")
+    score = len(missing)
+    stage = "ready" if score <= 1 else "in progress" if score <= 3 else "incomplete"
+    return stage, missing
 
 
 # ---------------------------------------------------------------------------
@@ -1731,7 +1888,7 @@ SCAN = {"running": False, "phase": "idle", "progress": {"dirs": 0, "projects_don
 
 def do_scan(roots, max_depth):
     SCAN["running"] = True
-    SCAN["phase"] = "walking file tree"
+    SCAN["phase"] = "searching folders for projects"
     SCAN["error"] = None
     SCAN["started"] = time.time()
     SCAN["finished"] = None
@@ -1745,11 +1902,12 @@ def do_scan(roots, max_depth):
             if not os.path.isdir(root):
                 continue
             p, st = discover_projects(root, max_depth, None, SCAN["progress"])
-            projects += p
+            seen_paths = {x["path"] for x in projects}
+            projects += [x for x in p if x["path"] not in seen_paths]     # overlapping roots
             for k, v in st.items():
                 all_subtree[k] = max(all_subtree.get(k, 0), v)
-        SCAN["projects_total"] = len(projects)
-        SCAN["phase"] = "analyzing projects"
+        SCAN["progress"]["projects_total"] = len(projects)
+        SCAN["phase"] = "reading projects"
 
         details = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
@@ -1763,7 +1921,7 @@ def do_scan(roots, max_depth):
                     details[pr["path"]] = {**pr, "error": str(e)}
                 SCAN["progress"]["projects_done"] += 1
 
-        SCAN["phase"] = "scanning environment"
+        SCAN["phase"] = "checking installed tools"
         try:
             env = env_scan(roots[0] if roots else os.path.expanduser("~"))
         except Exception as e:
@@ -1789,9 +1947,19 @@ def do_scan(roots, max_depth):
         for x in procs:
             if x.get("pid") and x.get("cwd"):
                 cwd_by_pid[x["pid"]] = x["cwd"]
+        all_paths = sorted((p["path"].rstrip(os.sep) for p in details.values()), key=len, reverse=True)
+
+        def _owner(cwd):
+            # the deepest project containing cwd (a nested project owns its own processes)
+            if not cwd:
+                return None
+            for rp in all_paths:
+                if cwd == rp or cwd.startswith(rp + os.sep):
+                    return rp
+            return None
+
         def _in_project(cwd, rpath):
-            rp = rpath.rstrip(os.sep)
-            return bool(cwd) and (cwd == rp or cwd.startswith(rp + os.sep))
+            return _owner(cwd) == rpath.rstrip(os.sep)
 
         for p in details.values():
             rpath = p["path"]
@@ -1828,6 +1996,11 @@ def do_scan(roots, max_depth):
             skills = {"error": str(e), "skills": [], "duplicates": [], "summary": {}}
         try:
             agents = agents_scan(procs, listeners, skills)
+            ppaths = sorted(((p["path"], p["name"]) for p in projects_list), key=lambda x: -len(x[0]))
+            for a in agents:
+                for srow in a.get("session_list") or []:
+                    c = srow.get("cwd")
+                    srow["project"] = next((n for pth, n in ppaths if c and (c == pth or c.startswith(pth + os.sep))), None)
         except Exception as e:
             traceback.print_exc()
             agents = []
@@ -1838,7 +2011,8 @@ def do_scan(roots, max_depth):
             sys_sched = []
         SCAN["phase"] = "finding duplicate files"
         try:
-            dupes = duplicates_scan(projects_list)
+            extra = [f for f in (settings_get().get("dup_folders") or []) if os.path.isdir(f)]
+            dupes = duplicates_scan(projects_list, progress=SCAN["progress"], extra_folders=extra)
         except Exception as e:
             traceback.print_exc()
             dupes = {"error": str(e), "groups": [], "projects": []}
@@ -1851,6 +2025,7 @@ def do_scan(roots, max_depth):
         global_ports = [l for l in listeners if l.get("pid") not in linked_pids]
 
         with STATE["lock"]:
+            STATE["subtree"] = all_subtree
             STATE["data"] = {
                 "scanned_at": time.time(),
                 "roots": roots,
@@ -1876,6 +2051,50 @@ def do_scan(roots, max_depth):
         SCAN["error"] = str(e)
     finally:
         SCAN["running"] = False
+
+
+# share of the whole scan each phase takes (rough, from timing real scans)
+SCAN_PHASES = [("searching folders for projects", 0, 35), ("reading projects", 35, 72),
+               ("checking installed tools", 72, 78), ("checking ports & processes", 78, 81),
+               ("skills, agents & schedules", 81, 88), ("finding duplicate files", 88, 100)]
+
+
+def scan_progress_view():
+    """SCAN plus pct (0-100), eta_s (seconds left, None while unknown) and a one-line detail."""
+    out = dict(SCAN)
+    pr = SCAN.get("progress") or {}
+    phase = SCAN.get("phase")
+    pct, detail = None, ""
+    for name, lo, hi in SCAN_PHASES:
+        if name != phase:
+            continue
+        frac = 0.0
+        if name.startswith("searching"):
+            if pr.get("walk_expect"):
+                frac = min(0.98, pr.get("dirs", 0) / max(1, pr["walk_expect"]))
+            elif pr.get("walk_top"):
+                i, n = pr["walk_top"]
+                frac = min(0.98, i / max(1, n))
+            detail = "%s folders checked" % format(pr.get("dirs", 0), ",")
+        elif name == "reading projects":
+            frac = pr.get("projects_done", 0) / max(1, pr.get("projects_total", 0))
+            detail = "%d of %d projects" % (pr.get("projects_done", 0), pr.get("projects_total", 0))
+        elif name.startswith("finding duplicate"):
+            frac = pr.get("dup_done", 0) / max(1, pr.get("dup_total", 0)) if pr.get("dup_total") else 0
+            detail = "%s of %s compared" % (fmt_bytes(pr.get("dup_done", 0)), fmt_bytes(pr.get("dup_total", 0))) if pr.get("dup_total") else "listing files"
+        pct = lo + (hi - lo) * max(0.0, min(1.0, frac))
+    if phase == "done":
+        pct = 100
+    out["pct"] = round(pct, 1) if pct is not None else None
+    out["detail"] = detail
+    eta = None
+    if SCAN.get("running") and pct and pct > 2 and SCAN.get("started"):
+        el = time.time() - SCAN["started"]
+        if el > 2:
+            eta = el / (pct / 100.0) - el
+    out["eta_s"] = round(eta) if eta is not None else None
+    out["elapsed_s"] = round(time.time() - SCAN["started"]) if SCAN.get("started") and SCAN.get("running") else None
+    return out
 
 
 def top_level_sizes(roots, subtree):
@@ -1933,6 +2152,8 @@ def do_delete(path, force=False):
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
         return {"ok": False, "error": "path does not exist"}
+    if protected_path(path):
+        return {"ok": False, "error": "StackRadar never deletes your home folder or its standard folders (%s)" % os.path.basename(path)}
     size, _ = fast_dir_size(path) if os.path.isdir(path) else (os.path.getsize(path), 1)
     if OS_NAME == "Windows":
         if not force:
@@ -2039,7 +2260,7 @@ META = {"lock": threading.RLock(), "data": None}
 
 
 def meta_defaults():
-    return {"color": None, "rating": 0, "notes": "", "status": "active"}
+    return {"color": None, "rating": 0, "notes": "", "status": "active", "category": None, "tags": []}
 
 
 def meta_all():
@@ -2065,6 +2286,11 @@ def meta_set(path, patch):
         cur = {**meta_defaults(), **(d.get(path) or {})}
         if isinstance(patch.get("archive"), dict):
             cur["archive"] = patch["archive"]
+        if "category" in patch:
+            c = patch["category"]
+            cur["category"] = (str(c).strip()[:40] or None) if c else None
+        if isinstance(patch.get("tags"), list):
+            cur["tags"] = sorted({str(t).strip()[:30] for t in patch["tags"] if str(t).strip()})[:12]
         for k in ("color", "rating", "notes", "status"):
             if k in patch and patch[k] is not None:
                 if k == "status" and patch[k] not in ("active", "archived", "fix"):
@@ -2453,6 +2679,7 @@ def port_panel_data():
     listeners = _live_listeners()
     cwds = _live_pid_cwds([l.get("pid") for l in listeners])
     projs = [( (p.get("path") or "").rstrip(os.sep), p.get("name")) for p in data.get("projects", [])]
+    projs.sort(key=lambda x: -len(x[0] or ""))   # deepest (nested) project first
 
     killable, seen, live_projects = [], set(), set()
     self_pid = os.getpid()
@@ -2478,12 +2705,220 @@ def port_panel_data():
 
 
 # ---------------------------------------------------------------------------
+# Ports: every listening port with its process, and a safe stop button
+# ---------------------------------------------------------------------------
+
+WELL_KNOWN_PORTS = {
+    22: "SSH", 53: "DNS", 80: "HTTP", 443: "HTTPS", 631: "printing (CUPS)", 1433: "SQL Server", 1883: "MQTT",
+    3000: "dev server (Node / React / Rails)", 3001: "dev server", 3306: "MySQL", 4000: "dev server", 4200: "Angular dev server",
+    5000: "dev server / AirPlay receiver (macOS)", 5173: "Vite dev server", 5432: "PostgreSQL", 5672: "RabbitMQ",
+    6379: "Redis", 7000: "AirPlay receiver (macOS)", 8000: "dev server (Django / FastAPI)", 8080: "HTTP alt / proxy",
+    8888: "Jupyter", 9000: "PHP-FPM / MinIO", 9200: "Elasticsearch", 11434: "Ollama", 1234: "LM Studio",
+    27017: "MongoDB", 5037: "Android adb", 8081: "Metro (React Native)", 19000: "Expo", 6006: "Storybook",
+}
+SYSTEM_PROC_HINTS = {"controlce": "macOS Control Center (AirPlay receiver; turn off in System Settings → General → AirDrop & Handoff)",
+                     "rapportd": "macOS Continuity", "launchd": "macOS launchd", "mDNSResponder": "macOS Bonjour",
+                     "systemd": "systemd", "svchost.exe": "Windows service host", "System": "Windows kernel",
+                     "lsass.exe": "Windows security", "wininit.exe": "Windows", "spoolsv.exe": "Windows printing",
+                     "sshd": "SSH server", "cupsd": "printing", "docker-proxy": "Docker port mapping",
+                     "com.docker.backend": "Docker Desktop", "postgres": "PostgreSQL", "mysqld": "MySQL", "redis-server": "Redis",
+                     "ollama": "Ollama"}
+
+
+def _proc_details(pids):
+    """{pid: {user, uid, cmd, cwd, started}} best effort for each OS."""
+    pids = [p for p in set(pids) if p]
+    res = {p: {} for p in pids}
+    if OS_NAME == "Linux":
+        import pwd
+        try:
+            clk = os.sysconf("SC_CLK_TCK")
+            with open("/proc/uptime") as f:
+                boot = time.time() - float(f.read().split()[0])
+        except Exception:
+            clk, boot = 100, None
+        for pid in pids:
+            d = res[pid]
+            try:
+                with open("/proc/%d/status" % pid) as f:
+                    for line in f:
+                        if line.startswith("Uid:"):
+                            d["uid"] = int(line.split()[1])
+                            break
+                d["user"] = pwd.getpwuid(d["uid"]).pw_name
+            except Exception:
+                pass
+            try:
+                with open("/proc/%d/cmdline" % pid, "rb") as f:
+                    d["cmd"] = f.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()[:400]
+            except Exception:
+                pass
+            try:
+                d["cwd"] = os.readlink("/proc/%d/cwd" % pid)
+            except Exception:
+                pass
+            try:
+                with open("/proc/%d/stat" % pid) as f:
+                    start_ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+                if boot:
+                    d["started"] = boot + start_ticks / clk
+            except Exception:
+                pass
+    elif OS_NAME == "Darwin":
+        ok, text = run_cmd(["ps", "-o", "pid=,uid=,user=,lstart=,command=", "-p", ",".join(map(str, pids))], timeout=8)
+        for line in (text or "").splitlines():
+            parts = line.split(None, 8)
+            if len(parts) < 9:
+                continue
+            try:
+                pid = int(parts[0])
+            except ValueError:
+                continue
+            d = res.setdefault(pid, {})
+            d["uid"], d["user"] = int(parts[1]), parts[2]
+            try:
+                d["started"] = time.mktime(time.strptime(" ".join(parts[3:8]), "%a %b %d %H:%M:%S %Y"))
+            except Exception:
+                pass
+            d["cmd"] = parts[8][:400]
+        for pid in pids:
+            cwd = get_cwd_mac(pid)
+            if cwd:
+                res[pid]["cwd"] = cwd
+    elif OS_NAME == "Windows":
+        ok, text = run_cmd(["tasklist", "/v", "/fo", "csv", "/nh"], timeout=15)
+        for line in (text or "").splitlines():
+            cols = [c.strip('"') for c in line.strip().split('","')]
+            if len(cols) >= 7:
+                try:
+                    pid = int(cols[1])
+                except ValueError:
+                    continue
+                if pid in res:
+                    res[pid]["user"] = cols[6].split("\\")[-1]
+                    res[pid]["cmd"] = cols[0]
+        if pids:
+            ps = ("Get-CimInstance Win32_Process -Filter \"%s\" | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
+                  % " OR ".join("ProcessId=%d" % p for p in pids[:60]))
+            ok, text = run_cmd(["powershell", "-NoProfile", "-Command", ps], timeout=20)
+            for line in (text or "").splitlines():
+                pid_s, _, cl = line.partition("\t")
+                try:
+                    if cl.strip():
+                        res[int(pid_s)]["cmd"] = cl.strip()[:400]
+                except (ValueError, KeyError):
+                    pass
+    return res
+
+
+def _me():
+    try:
+        return {"uid": os.getuid(), "user": getpass.getuser()}
+    except AttributeError:
+        return {"uid": None, "user": getpass.getuser()}
+
+
+def _protected_pids():
+    """StackRadar itself and the desktop shell that started it."""
+    out = {os.getpid()}
+    try:
+        out.add(os.getppid())
+    except Exception:
+        pass
+    return out
+
+
+def ports_view():
+    with STATE["lock"]:
+        data = STATE["data"] or {}
+    listeners = _live_listeners(max_age=1.0)
+    det = _proc_details([l.get("pid") for l in listeners])
+    projs = [((p.get("path") or "").rstrip(os.sep), p.get("name")) for p in data.get("projects", [])]
+    projs.sort(key=lambda x: -len(x[0] or ""))
+    with RUNS["lock"]:
+        managed = {r.get("pid"): r.get("project") for r in RUNS["runs"].values() if r.get("status") == "running"}
+    me, protected = _me(), _protected_pids()
+    rows = []
+    for l in sorted(listeners, key=lambda x: (x.get("port") or 0, x.get("pid") or 0)):
+        pid = l.get("pid")
+        d = det.get(pid) or {}
+        proc = l.get("proc") or (os.path.basename((d.get("cmd") or "").split(" ")[0]) if d.get("cmd") else None)
+        project = managed.get(pid)
+        if not project and d.get("cwd"):
+            for rp, name in projs:
+                if d["cwd"] == rp or d["cwd"].startswith(rp + os.sep):
+                    project = name
+                    break
+        mine = (d.get("uid") == me["uid"]) if me["uid"] is not None and d.get("uid") is not None else \
+               (bool(d.get("user")) and d.get("user", "").lower() == (me["user"] or "").lower())
+        addr = l.get("addr") or ""
+        local_only = addr in ("127.0.0.1", "::1", "localhost") or addr.startswith("127.")
+        system = next((v for k, v in SYSTEM_PROC_HINTS.items() if proc and proc.lower().startswith(k.lower())), None)
+        if pid in protected:
+            can, why = False, "this is StackRadar itself"
+        elif not pid:
+            can, why = False, "the OS didn't say which process owns this port (it may belong to another user: try with admin rights)"
+        elif not mine:
+            can, why = False, "owned by %s. Stopping it needs admin rights" % (d.get("user") or "another user")
+        else:
+            can, why = True, None
+        rows.append({"port": l.get("port"), "pid": pid, "proc": proc, "addr": addr or "*",
+                     "exposure": "this computer only" if local_only else "your network (all interfaces)",
+                     "user": d.get("user"), "mine": mine, "cmd": d.get("cmd"), "cwd": d.get("cwd"),
+                     "started": d.get("started"), "project": project, "managed": pid in managed,
+                     "service": WELL_KNOWN_PORTS.get(l.get("port")), "system": system,
+                     "can_stop": can, "why_not": why,
+                     "admin_cmd": None if can or not pid else (
+                         "taskkill /PID %d /F   (in an Administrator terminal)" % pid if OS_NAME == "Windows" else "sudo kill %d" % pid)})
+    return {"ports": rows, "me": me["user"], "os": OS_NAME, "checked_at": time.time()}
+
+
+def port_stop(pid, port, force=False):
+    """Stop the process listening on a port: only your own processes, never StackRadar, and only if it is
+    still listening on that port (so a recycled pid is never hit)."""
+    pid, port = int(pid), int(port)
+    _PORT_CACHE["t"] = 0
+    row = next((r for r in ports_view()["ports"] if r["pid"] == pid and r["port"] == port), None)
+    if not row:
+        return {"ok": False, "error": "nothing with pid %d is listening on port %d any more" % (pid, port)}
+    if not row["can_stop"]:
+        return {"ok": False, "error": row["why_not"], "admin_cmd": row["admin_cmd"]}
+    with RUNS["lock"]:
+        rid = next((k for k, r in RUNS["runs"].items() if r.get("pid") == pid and r.get("status") == "running"), None)
+    if rid:
+        run_stop(rid, hard=force)
+        method = "stopped the StackRadar run"
+    elif OS_NAME == "Windows":
+        ok, out = run_cmd(["taskkill", "/PID", str(pid)] + (["/F"] if force else []), timeout=15)
+        if not ok:
+            return {"ok": False, "error": (out or "taskkill failed").strip()[:300]}
+        method = "taskkill" + (" /F" if force else "")
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            return {"ok": True, "pid": pid, "port": port, "method": "already gone", "still_listening": False}
+        except PermissionError:
+            return {"ok": False, "error": "permission denied", "admin_cmd": "sudo kill %d" % pid}
+        method = "SIGKILL (force)" if force else "SIGTERM (asked it to quit)"
+    still = True
+    for _ in range(12):
+        time.sleep(0.25)
+        _PORT_CACHE["t"] = 0
+        if not any(l.get("pid") == pid and l.get("port") == port for l in _live_listeners(max_age=0)):
+            still = False
+            break
+    return {"ok": True, "pid": pid, "port": port, "method": method, "still_listening": still}
+
+
+# ---------------------------------------------------------------------------
 # settings (hints on/off, feature toggles) — ~/.stackradar/settings.json
 # ---------------------------------------------------------------------------
 
 SETTINGS_FILE = os.path.join(os.path.expanduser("~/.stackradar"), "settings.json")
 SETTINGS = {"lock": threading.Lock(), "data": None}
-FEATURE_KEYS = ("network", "system", "schedules", "skills", "agents", "duplicates", "updates", "lineage", "runs", "reclaim")
+FEATURE_KEYS = ("network", "system", "schedules", "skills", "agents", "duplicates", "updates", "lineage", "runs", "reclaim",
+                "ports", "tools", "caches", "disk")
 
 
 def settings_defaults():
@@ -2530,6 +2965,25 @@ def settings_set(patch):
         for k, v in patch["features"].items():
             if k in FEATURE_KEYS and isinstance(v, bool):
                 cur["features"][k] = v
+    if isinstance(patch.get("theme_custom"), dict):
+        tc = patch["theme_custom"]
+        col = re.compile(r"^(#[0-9a-fA-F]{3,8}|rgba?\([\d\s.,%]+\))$")
+        out = {"dark": str(tc.get("dark") or "midnight")[:30], "light": str(tc.get("light") or "daylight")[:30], "overrides": {}}
+        for preset, toks in (tc.get("overrides") or {}).items():
+            if isinstance(toks, dict):
+                out["overrides"][str(preset)[:30]] = {str(k)[:30]: v for k, v in list(toks.items())[:80]
+                                                       if re.match(r"^--[\w-]+$", str(k)) and isinstance(v, str) and col.match(v.strip())}
+        out["custom_presets"] = {}
+        for name, d in list((tc.get("custom_presets") or {}).items())[:12]:
+            if isinstance(d, dict) and d.get("kind") in ("dark", "light"):
+                out["custom_presets"][str(name)[:30]] = {"kind": d["kind"], "label": str(d.get("label") or name)[:40],
+                                                         "tokens": {str(k)[:30]: v for k, v in (d.get("tokens") or {}).items()
+                                                                    if re.match(r"^--[\w-]+$", str(k)) and isinstance(v, str) and col.match(v.strip())}}
+        cur["theme_custom"] = out
+    if isinstance(patch.get("app_net_levels"), dict):
+        cur["app_net_levels"] = {str(k)[:600]: v for k, v in patch["app_net_levels"].items() if v in ("low", "medium", "strict")}
+    if isinstance(patch.get("dup_folders"), list):
+        cur["dup_folders"] = [str(x)[:500] for x in patch["dup_folders"]][:10]
     repo = patch.get("update_repo")
     if isinstance(repo, str) and re.match(r"^[\w.-]+/[\w.-]+$", repo):
         cur["update_repo"] = repo
@@ -2782,6 +3236,7 @@ def top_processes(limit=15):
     # attribute to scanned projects (Linux/macOS cwd)
     with STATE["lock"]:
         projs = [((p.get("path") or "").rstrip(os.sep), p.get("name")) for p in (STATE["data"] or {}).get("projects", [])]
+        projs.sort(key=lambda x: -len(x[0] or ""))   # deepest (nested) project first
     cwds = _live_pid_cwds([r["pid"] for r in rows]) if projs else {}
     managed = {}
     with RUNS["lock"]:
@@ -3067,16 +3522,209 @@ def _link_project(text, projs):
     return {"path": best[0], "name": best[1]} if best else None
 
 
+CRON_PAUSE = "#[stackradar-paused] "
+AGENT_CRON_FILES = ["~/.openclaw/cron/jobs.json", "~/.clawdbot/cron/jobs.json", "~/.hermes/cron/jobs.json",
+                    "~/.hermes/cron.json", "~/.paperclip/schedules.json"]
+
+
+def _cron_fields_ok(expr):
+    return bool(expr) and (expr.startswith("@") and expr in CRON_ALIASES or cron_parse(expr) is not None)
+
+
+def _backup(name, text):
+    d = os.path.join(os.path.expanduser("~/.stackradar"), "backups")
+    os.makedirs(d, exist_ok=True)
+    fp = os.path.join(d, "%s-%s.bak" % (name, datetime.now().strftime("%Y%m%d-%H%M%S-%f")))
+    with open(fp, "w", encoding="utf-8") as f:
+        f.write(text)
+    return fp
+
+
+def schedule_action(rec, action, new_expr=None):
+    """Pause / resume / reschedule / delete one schedule. Every change keeps a backup in ~/.stackradar/backups."""
+    src = rec.get("source") or rec.get("kind") or ""
+    home = os.path.expanduser("~")
+    if new_expr is not None:
+        new_expr = str(new_expr).strip()
+    if action == "reschedule" and src in ("crontab",) and not _cron_fields_ok(new_expr):
+        return {"ok": False, "error": "not a valid cron expression (minute hour day month weekday)"}
+    if src == "crontab":
+        ok, text = run_cmd(["crontab", "-l"], timeout=6)
+        if not ok:
+            return {"ok": False, "error": "couldn't read your crontab"}
+        lines = text.splitlines()
+        raw = rec.get("raw")
+        if raw not in lines:
+            return {"ok": False, "error": "that line changed since the scan: rescan first"}
+        i = lines.index(raw)
+        body = raw[len(CRON_PAUSE):] if raw.startswith(CRON_PAUSE) else raw
+        if action == "pause":
+            lines[i] = CRON_PAUSE + body
+        elif action == "resume":
+            lines[i] = body
+        elif action == "delete":
+            del lines[i]
+        elif action == "reschedule":
+            cmd = body.partition(" ")[2] if body.strip().startswith("@") else body.split(None, 5)[5]
+            lines[i] = (CRON_PAUSE if raw.startswith(CRON_PAUSE) else "") + new_expr + " " + cmd
+        else:
+            return {"ok": False, "error": "unknown action"}
+        bak = _backup("crontab", text)
+        try:
+            r = subprocess.run(["crontab", "-"], input="\n".join(lines) + "\n", text=True, capture_output=True, timeout=10)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        if r.returncode != 0:
+            return {"ok": False, "error": (r.stderr or "crontab refused the change").strip()[:300]}
+        return {"ok": True, "backup": bak}
+    if src == "launchd":
+        fp = os.path.abspath(rec.get("file") or "")
+        if not fp.startswith(os.path.join(home, "Library", "LaunchAgents") + os.sep) or not os.path.isfile(fp):
+            return {"ok": False, "error": "only your own LaunchAgents can be changed"}
+        import plistlib
+        if action in ("pause", "resume"):
+            ok, out = run_cmd(["launchctl", "unload" if action == "pause" else "load", "-w", fp], timeout=10)
+            return {"ok": ok, "error": None if ok else (out or "launchctl failed")[:300]}
+        if action == "delete":
+            run_cmd(["launchctl", "unload", "-w", fp], timeout=10)
+            return do_delete(fp)
+        if action == "reschedule":
+            with open(fp, "rb") as f:
+                pl = plistlib.load(f)
+            with open(fp, "rb") as f:
+                bak = _backup("launchd-" + os.path.basename(fp), f.read().decode("utf-8", "replace"))
+            m = re.match(r"^every\s+(\d+)\s*(s|m|h)?$", new_expr or "")
+            if m:
+                pl.pop("StartCalendarInterval", None)
+                pl["StartInterval"] = int(m.group(1)) * {"s": 1, None: 1, "m": 60, "h": 3600}[m.group(2)]
+            else:
+                parts = (new_expr or "").split()
+                if len(parts) != 5 or not all(re.match(r"^(\*|\d+)$", x) for x in parts):
+                    return {"ok": False, "error": "launchd needs plain numbers or * (e.g. 30 9 * * 1), or \"every 15m\""}
+                cal = {}
+                for key, v in zip(("Minute", "Hour", "Day", "Month", "Weekday"), parts):
+                    if v != "*":
+                        cal[key] = int(v)
+                pl.pop("StartInterval", None)
+                pl["StartCalendarInterval"] = cal
+            with open(fp, "wb") as f:
+                plistlib.dump(pl, f)
+            run_cmd(["launchctl", "unload", fp], timeout=10)
+            ok, out = run_cmd(["launchctl", "load", "-w", fp], timeout=10)
+            return {"ok": True, "backup": bak, "note": None if ok else "saved; reload failed: " + (out or "")[:200]}
+    if src == "systemd timer":
+        fp = os.path.abspath(rec.get("file") or "")
+        base = os.path.join(home, ".config", "systemd", "user")
+        if not fp.startswith(base + os.sep) or not os.path.isfile(fp):
+            return {"ok": False, "error": "only your own user timers can be changed"}
+        unit = os.path.basename(fp)
+        if action in ("pause", "resume"):
+            ok, out = run_cmd(["systemctl", "--user", "disable" if action == "pause" else "enable", "--now", unit], timeout=15)
+            return {"ok": ok, "error": None if ok else (out or "")[:300]}
+        if action == "delete":
+            run_cmd(["systemctl", "--user", "disable", "--now", unit], timeout=15)
+            r = do_delete(fp)
+            run_cmd(["systemctl", "--user", "daemon-reload"], timeout=15)
+            return r
+        if action == "reschedule":
+            if not re.match(r"^[\w*:,./ -]{1,80}$", new_expr or ""):
+                return {"ok": False, "error": "use a systemd OnCalendar value, e.g. 'Mon..Fri 09:00' or 'hourly'"}
+            text = read_head(fp, 50_000)
+            bak = _backup("systemd-" + unit, text)
+            if re.search(r"^\s*OnCalendar\s*=", text, re.M):
+                text = re.sub(r"^(\s*OnCalendar\s*=).*$", lambda m: m.group(1) + new_expr, text, count=1, flags=re.M)
+            else:
+                text = re.sub(r"^\[Timer\]\s*$", "[Timer]\nOnCalendar=" + new_expr, text, count=1, flags=re.M)
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(text)
+            run_cmd(["systemctl", "--user", "daemon-reload"], timeout=15)
+            run_cmd(["systemctl", "--user", "restart", unit], timeout=15)
+            return {"ok": True, "backup": bak}
+    if src == "Task Scheduler":
+        name = rec.get("name") or ""
+        if not re.match(r"^[\w .\\()-]{1,200}$", name):
+            return {"ok": False, "error": "unexpected task name"}
+        if action == "pause":
+            ok, out = run_cmd(["schtasks", "/Change", "/TN", name, "/DISABLE"], timeout=15)
+        elif action == "resume":
+            ok, out = run_cmd(["schtasks", "/Change", "/TN", name, "/ENABLE"], timeout=15)
+        elif action == "delete":
+            ok, out = run_cmd(["schtasks", "/Delete", "/TN", name, "/F"], timeout=15)
+        else:
+            subprocess.Popen(["taskschd.msc"], shell=True)
+            return {"ok": True, "note": "opened Task Scheduler: change the trigger there"}
+        return {"ok": ok, "error": None if ok else (out or "")[:300]}
+    if src.endswith(" cron") and rec.get("file"):
+        fp = os.path.abspath(rec["file"])
+        known = [os.path.abspath(os.path.expanduser(c)) for c in AGENT_CRON_FILES]
+        if fp not in known or not os.path.isfile(fp):
+            return {"ok": False, "error": "not an agent schedule file StackRadar knows"}
+        text = read_head(fp, 5_000_000)
+        data = json.loads(text)
+        jobs = data.get("jobs") if isinstance(data, dict) else data
+        lst = list(jobs.values()) if isinstance(jobs, dict) else jobs
+        job = next((j for j in lst or [] if isinstance(j, dict) and (j.get("name") or j.get("id") or "job") == rec.get("name")), None)
+        if not job:
+            return {"ok": False, "error": "job not found (changed since the scan?)"}
+        bak = _backup(os.path.basename(fp), text)
+        if action in ("pause", "resume"):
+            job["enabled"] = action == "resume"
+        elif action == "delete":
+            if isinstance(jobs, dict):
+                jobs.pop(next(k for k, v in jobs.items() if v is job))
+            else:
+                jobs.remove(job)
+        elif action == "reschedule":
+            if not cron_parse(new_expr or ""):
+                return {"ok": False, "error": "not a valid cron expression"}
+            if isinstance(job.get("schedule"), dict):
+                job["schedule"]["expr"] = new_expr
+                job["schedule"].pop("everyMs", None)
+            elif "cron" in job:
+                job["cron"] = new_expr
+            else:
+                job["expr"] = new_expr
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return {"ok": True, "backup": bak, "note": "restart the agent if it doesn't pick the change up"}
+    if rec.get("scope") == "project" and rec.get("file") and rec.get("project"):
+        proj = _project_by_path((rec.get("project") or {}).get("path"))
+        if not proj:
+            return {"ok": False, "error": "project not found in the last scan"}
+        fp = os.path.abspath(os.path.join(proj["path"], rec["file"]))
+        if not fp.startswith(proj["path"].rstrip(os.sep) + os.sep) or not os.path.isfile(fp):
+            return {"ok": False, "error": "file is not inside the project"}
+        if not any(rec["file"] == s0.get("file") and rec.get("expr") == s0.get("expr") for s0 in proj.get("schedules") or []):
+            return {"ok": False, "error": "schedule not found in that project (rescan?)"}
+        if action != "reschedule":
+            return {"ok": False, "error": "schedules in repo files can only be re-timed here; to stop one, edit or remove it in %s" % rec["file"]}
+        if not cron_parse(new_expr or ""):
+            return {"ok": False, "error": "not a valid cron expression"}
+        text = read_head(fp, 2_000_000)
+        old = rec.get("expr") or ""
+        if not old or old not in text:
+            return {"ok": False, "error": "couldn't find the old expression in the file"}
+        bak = _backup(os.path.basename(fp), text)
+        with open(fp, "w", encoding="utf-8") as f:
+            f.write(text.replace(old, new_expr, 1))
+        return {"ok": True, "backup": bak, "note": "edited %s: commit and push it for the change to apply" % rec["file"]}
+    return {"ok": False, "error": "StackRadar can't change %s schedules" % src}
+
+
 def system_schedules(projects=()):
     """User-level schedulers. Read-only; never modifies anything."""
     projs = [(p.get("path"), p.get("name")) for p in projects]
+    projs.sort(key=lambda x: -len(x[0] or ""))   # deepest (nested) project first
     out = []
     home = os.path.expanduser("~")
     if shutil.which("crontab"):
         ok, text = run_cmd(["crontab", "-l"], timeout=6)
         if ok:
-            for line in text.splitlines():
-                line = line.strip()
+            for raw in text.splitlines():
+                line = raw.strip()
+                paused = line.startswith(CRON_PAUSE)
+                if paused:
+                    line = line[len(CRON_PAUSE):].strip()
                 if not line or line.startswith("#") or re.match(r"^\w+=", line):
                     continue
                 if line.startswith("@"):
@@ -3088,7 +3736,8 @@ def system_schedules(projects=()):
                     expr, cmd = " ".join(parts[:5]), parts[5]
                 nxt = cron_next(expr) if expr != "@reboot" else []
                 out.append({"source": "crontab", "name": cmd[:80], "expr": expr, "human": cron_describe(expr),
-                            "command": sanitize_cmd(cmd[:300]), "next": nxt[0] if nxt else None, "enabled": True})
+                            "command": sanitize_cmd(cmd[:300]), "next": None if paused else (nxt[0] if nxt else None),
+                            "enabled": not paused, "raw": raw})
     if OS_NAME == "Darwin":
         import plistlib
         for fp in sorted(globmod.glob(os.path.join(home, "Library", "LaunchAgents", "*.plist")))[:80]:
@@ -3277,9 +3926,22 @@ def _skill_record(fp, agent, kind, scope, project=None):
         mtime = os.path.getmtime(fp)
     except Exception:
         size, mtime = 0, None
+    digest = hashlib.sha1(body.encode("utf-8", "replace"))
+    if kind == "skill" and os.path.isdir(folder):
+        # identical means every file in the skill folder matches, not just SKILL.md
+        digest = hashlib.sha1()
+        files, _ = walk_files(folder, cap_files=300, cap_bytes=5_000_000)
+        for f in sorted(files):
+            digest.update(os.path.relpath(f, folder).replace(os.sep, "/").encode())
+            try:
+                with open(f, "rb") as fh:
+                    digest.update(fh.read())
+            except Exception:
+                pass
+    link = os.path.realpath(folder) if os.path.islink(folder) else None
     return {"name": name, "description": (fm.get("description") or "")[:300], "agent": agent,
             "kind": kind, "scope": scope, "project": project, "path": fp, "folder": folder,
-            "size": size, "mtime": mtime, "hash": hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16],
+            "size": size, "mtime": mtime, "hash": digest.hexdigest()[:16], "link_target": link,
             "plugin": (re.search(r"/plugins/(?:cache|marketplaces)/([^/]+)/", fp.replace("\\", "/")) or [None, None])[1]}
 
 
@@ -3311,7 +3973,7 @@ def claude_global_usage():
     """One pass over every Claude Code transcript: skill + slash-command use, tokens, models."""
     uses = {}      # skill name -> {count, last, projects:set}
     tok = {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "sessions": 0, "models": {}, "last": None,
-           "tools": {}}
+           "tools": {}, "by_model": {}, "by_surface": {}, "sessions_list": []}
     cmd_rx = re.compile(r"<command-name>/?([\w:.-]+)</command-name>")
     for fp, mt in _iter_claude_logs():
         tok["sessions"] += 1
@@ -3320,12 +3982,21 @@ def claude_global_usage():
             f = open(fp, "r", encoding="utf-8", errors="replace")
         except Exception:
             continue
+        sub = os.sep + "subagents" + os.sep in fp
+        sess = {"agent": "claude", "file": fp, "id": os.path.splitext(os.path.basename(fp))[0], "cwd": None, "title": None,
+                "first_prompt": None, "started": None, "last": mt, "surface": None, "version": None, "branch": None,
+                "models": {}, "in": 0, "out": 0, "cache": 0, "msgs": 0, "subagent": sub}
+        try:
+            sess["size"] = os.path.getsize(fp)
+        except Exception:
+            sess["size"] = 0
         with f:
             for line in f:
                 has_skill = '"Skill"' in line
                 has_cmd = "<command-name>" in line
                 has_usage = '"usage"' in line
-                if not (has_skill or has_cmd or has_usage):
+                meta_line = sess["cwd"] is None or sess["title"] is None or sess["first_prompt"] is None or '"customTitle"' in line
+                if not (has_skill or has_cmd or has_usage or meta_line):
                     continue
                 try:
                     obj = json.loads(line)
@@ -3333,17 +4004,40 @@ def claude_global_usage():
                     continue
                 ts = _ts_iso(obj.get("timestamp")) or mt
                 cwd = obj.get("cwd")
+                if cwd and not sess["cwd"]:
+                    sess["cwd"], sess["branch"], sess["version"] = cwd, obj.get("gitBranch"), obj.get("version")
+                if obj.get("entrypoint") and not sess["surface"]:
+                    sess["surface"] = obj["entrypoint"]
+                if obj.get("customTitle"):
+                    sess["title"] = str(obj["customTitle"])[:140]
+                if obj.get("timestamp") and not sess["started"]:
+                    sess["started"] = ts
                 msg = obj.get("message") or {}
                 if not isinstance(msg, dict):
                     continue
+                if obj.get("type") == "user" and not sess["first_prompt"] and not obj.get("isMeta"):
+                    c0 = msg.get("content")
+                    txt = c0 if isinstance(c0, str) else next((c.get("text") for c in (c0 or []) if isinstance(c, dict) and c.get("type") == "text"), None)
+                    if txt and not txt.startswith("<"):
+                        sess["first_prompt"] = re.sub(r"\s+", " ", txt)[:200]
                 if obj.get("type") == "assistant":
                     u = msg.get("usage") or {}
-                    tok["in"] += int(u.get("input_tokens") or 0)
-                    tok["out"] += int(u.get("output_tokens") or 0)
-                    tok["cache_read"] += int(u.get("cache_read_input_tokens") or 0)
-                    tok["cache_write"] += int(u.get("cache_creation_input_tokens") or 0)
+                    ti, to = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
+                    cr, cw = int(u.get("cache_read_input_tokens") or 0), int(u.get("cache_creation_input_tokens") or 0)
+                    tok["in"] += ti
+                    tok["out"] += to
+                    tok["cache_read"] += cr
+                    tok["cache_write"] += cw
+                    sess["in"] += ti
+                    sess["out"] += to
+                    sess["cache"] += cr + cw
+                    sess["msgs"] += 1
                     if msg.get("model"):
                         tok["models"][msg["model"]] = tok["models"].get(msg["model"], 0) + 1
+                        m = sess["models"].setdefault(msg["model"], {"in": 0, "out": 0, "msgs": 0})
+                        m["in"] += ti
+                        m["out"] += to
+                        m["msgs"] += 1
                 content = msg.get("content")
                 if isinstance(content, list):
                     for c in content:
@@ -3363,8 +4057,90 @@ def claude_global_usage():
                 elif isinstance(content, str) and has_cmd:
                     for m in cmd_rx.finditer(content):
                         _bump(uses, m.group(1), ts, cwd, "Claude Code (slash)")
+        sess["surface"] = surface_label(sess["surface"] or "cli")
+        _add_usage(tok, sess)
+        tok["sessions_list"].append(sess)
     tok["tools"] = dict(sorted(tok["tools"].items(), key=lambda kv: -kv[1])[:25])
+    tok["sessions_list"].sort(key=lambda x: -(x["last"] or 0))
     return uses, tok
+
+
+def surface_label(entry):
+    """Where an agent session ran: CLI, IDE, desktop app, web / cloud, SDK."""
+    e = (entry or "").lower()
+    if "vscode" in e or "jetbrains" in e or "ide" in e or "cursor" in e or "zed" in e:
+        return "IDE"
+    if "remote" in e or "web" in e or "cloud" in e:
+        return "Web / cloud"
+    if "desktop" in e or e == "app" or "mac" in e:
+        return "Desktop app"
+    if "sdk" in e or "action" in e or "exec" in e:
+        return "SDK / automation"
+    return "CLI"
+
+
+def _add_usage(tok, sess):
+    for model, m in (sess.get("models") or {}).items():
+        b = tok["by_model"].setdefault(model, {"in": 0, "out": 0, "msgs": 0, "sessions": 0})
+        b["in"] += m["in"]
+        b["out"] += m["out"]
+        b["msgs"] += m["msgs"]
+        b["sessions"] += 1
+    b = tok["by_surface"].setdefault(sess["surface"], {"in": 0, "out": 0, "sessions": 0})
+    b["in"] += sess["in"]
+    b["out"] += sess["out"]
+    b["sessions"] += 1
+
+
+def codex_usage(files):
+    """Codex CLI rollouts: per-session cwd, model, surface (originator) and tokens."""
+    tok = {"in": 0, "out": 0, "by_model": {}, "by_surface": {}, "sessions_list": []}
+    for fp in files[:1500]:
+        sess = {"agent": "codex", "file": fp, "id": os.path.splitext(os.path.basename(fp))[0], "cwd": None, "title": None,
+                "first_prompt": None, "started": None, "last": None, "surface": None, "version": None, "branch": None,
+                "models": {}, "in": 0, "out": 0, "cache": 0, "msgs": 0, "subagent": False}
+        try:
+            sess["last"], sess["size"] = os.path.getmtime(fp), os.path.getsize(fp)
+            model, last_usage = None, None
+            with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f):
+                    if i > 0 and not ('"turn_context"' in line or "total_token_usage" in line or ('"role":"user"' in line and not sess["first_prompt"])):
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    pl = o.get("payload") or {}
+                    if o.get("type") == "session_meta":
+                        sess["id"] = pl.get("id") or sess["id"]
+                        sess["cwd"], sess["version"] = pl.get("cwd"), pl.get("cli_version")
+                        sess["surface"] = pl.get("originator")
+                        sess["started"] = _ts_iso(pl.get("timestamp") or o.get("timestamp"))
+                        sess["branch"] = (pl.get("git") or {}).get("branch")
+                    elif o.get("type") == "turn_context" and pl.get("model"):
+                        model = pl["model"]
+                    elif "total_token_usage" in line:
+                        last_usage = ((pl.get("info") or {}).get("total_token_usage")) or last_usage
+                    elif pl.get("role") == "user" and not sess["first_prompt"]:
+                        for c in pl.get("content") or []:
+                            t = c.get("text") if isinstance(c, dict) else None
+                            if t and not t.startswith("<"):
+                                sess["first_prompt"] = re.sub(r"\s+", " ", t)[:200]
+                                break
+            if last_usage:
+                sess["in"], sess["out"] = int(last_usage.get("input_tokens") or 0), int(last_usage.get("output_tokens") or 0)
+                sess["cache"] = int(last_usage.get("cached_input_tokens") or 0)
+            if model:
+                sess["models"][model] = {"in": sess["in"], "out": sess["out"], "msgs": 1}
+        except Exception:
+            continue
+        sess["surface"] = surface_label(sess["surface"] or "cli")
+        tok["in"] += sess["in"]
+        tok["out"] += sess["out"]
+        _add_usage(tok, sess)
+        tok["sessions_list"].append(sess)
+    tok["sessions_list"].sort(key=lambda x: -(x["last"] or 0))
+    return tok
 
 
 def _bump(uses, name, ts, cwd, via):
@@ -3464,10 +4240,20 @@ def skills_scan(projects):
     dup_names = []
     for k, rs in by_name.items():
         if len(rs) > 1:
-            dup_names.append({"name": rs[0]["name"], "count": len(rs),
-                              "identical": len({r["hash"] for r in rs}) == 1,
-                              "wasted": sum(r["size"] for r in rs) - max(r["size"] for r in rs),
-                              "paths": [r["path"] for r in rs], "agents": sorted({r["agent"] for r in rs})})
+            real = {os.path.realpath(r["folder"]) for r in rs}
+            if len(real) == 1:
+                continue          # all are links to one shared copy: not a duplicate
+            variants = {}
+            for r in rs:
+                variants.setdefault(r["hash"], len(variants) + 1)
+            dup_names.append({"name": rs[0]["name"], "count": len(rs), "kind": rs[0]["kind"],
+                              "identical": len(variants) == 1, "variants": len(variants),
+                              "wasted": sum(r["size"] for r in rs if not r.get("link_target")) - max(r["size"] for r in rs),
+                              "paths": [r["path"] for r in rs], "agents": sorted({r["agent"] for r in rs}),
+                              "locations": [{"path": r["path"], "folder": r["folder"], "agent": r["agent"], "scope": r["scope"],
+                                             "project": r.get("project"), "size": r["size"], "mtime": r["mtime"], "uses": r.get("uses", 0),
+                                             "variant": variants[r["hash"]], "link_target": r.get("link_target"), "plugin": r.get("plugin")}
+                                            for r in sorted(rs, key=lambda r: -(r["mtime"] or 0))]})
     dup_names.sort(key=lambda d: -d["count"])
     dup_content = [{"hash": h, "names": sorted({r["name"] for r in rs}), "paths": [r["path"] for r in rs]}
                    for h, rs in by_hash.items() if len(rs) > 1 and len({r["name"].lower() for r in rs}) > 1]
@@ -3591,6 +4377,347 @@ def _codex_tokens(files):
     return tin, tout
 
 
+AGENT_PACKAGES = {   # where to look up the newest version and how to update
+    "claude": ("npm", "@anthropic-ai/claude-code"), "codex": ("npm", "@openai/codex"), "gemini": ("npm", "@google/gemini-cli"),
+    "copilot": ("npm", "@github/copilot"), "opencode": ("npm", "opencode-ai"), "qwen": ("npm", "@qwen-code/qwen-code"),
+    "openclaw": ("npm", "openclaw"), "paperclip": ("npm", "paperclipai"), "amp": ("npm", "@sourcegraph/amp"),
+    "aider": ("pip", "aider-chat"), "goose": ("brew", "block-goose-cli"), "ollama": ("brew", "ollama"), "continue": ("npm", "@continuedev/cli"),
+    "hermes": ("pip", "hermes-agent"),
+}
+SESSION_META_FILE = os.path.join(os.path.expanduser("~/.stackradar"), "sessions.json")
+SESSION_ARCHIVE = os.path.join(os.path.expanduser("~/.stackradar"), "archived-sessions")
+
+
+def session_meta():
+    try:
+        with open(SESSION_META_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _session_rows(lst, limit=400):
+    meta = session_meta()
+    with STATE["lock"]:
+        projects = [(p["path"], p["name"]) for p in (STATE["data"] or {}).get("projects", [])] if STATE.get("data") else []
+    projects.sort(key=lambda x: -len(x[0]))
+    out = []
+    for x in lst[:limit]:
+        r = {k: x.get(k) for k in ("agent", "file", "id", "cwd", "title", "first_prompt", "started", "last", "surface",
+                                     "version", "branch", "in", "out", "cache", "msgs", "size", "subagent")}
+        r["models"] = sorted(x.get("models", {}), key=lambda m: -x["models"][m]["out"])
+        r["project"] = next((n for pth, n in projects if r["cwd"] and (r["cwd"] == pth or r["cwd"].startswith(pth + os.sep))), None)
+        m = meta.get(x["file"]) or {}
+        r["tags"], r["note"] = m.get("tags") or [], m.get("note")
+        out.append(r)
+    return out
+
+
+def _proc_usage(pids):
+    """{pid: (cpu %, rss bytes)}"""
+    pids = [p for p in pids if p]
+    if not pids:
+        return {}
+    out = {}
+    if OS_NAME == "Windows":
+        ok, text = run_cmd(["tasklist", "/fo", "csv", "/nh"], timeout=10)
+        for line in (text or "").splitlines():
+            cols = [c.strip('"') for c in line.split('","')]
+            try:
+                pid = int(cols[1])
+                if pid in pids:
+                    out[pid] = (None, int(re.sub(r"[^\d]", "", cols[4]) or 0) * 1024)
+            except (ValueError, IndexError):
+                pass
+        return out
+    ok, text = run_cmd(["ps", "-o", "pid=,pcpu=,rss=", "-p", ",".join(map(str, pids))], timeout=6)
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 3:
+            try:
+                out[int(parts[0])] = (float(parts[1]), int(parts[2]) * 1024)
+            except ValueError:
+                pass
+    return out
+
+
+def agent_latest(agent_id):
+    """Newest published version of an agent (asks npm / PyPI / Homebrew; only when you click)."""
+    pkg = AGENT_PACKAGES.get(agent_id)
+    if not pkg:
+        return {"ok": False, "error": "no package source known for this agent"}
+    mgr, name = pkg
+    info = package_info(mgr, name, None)
+    cmd = None
+    try:
+        cmd = " ".join(build_pkg_update_command(mgr, name)) if mgr in ("npm", "pip", "brew") else None
+    except ValueError:
+        pass
+    if agent_id == "claude" and shutil.which("claude"):
+        cmd = "claude update"
+    return {"ok": True, "manager": mgr, "package": name, "latest": info.get("latest"), "released": info.get("latest_date"),
+            "update_cmd": cmd, "notes": info.get("releases", [])[:3]}
+
+
+def _session_allowed(agent_id, fp):
+    a = next((x for x in AGENT_DEFS if x["id"] == agent_id), None)
+    if not a:
+        return False
+    rp = os.path.realpath(fp)
+    roots = [os.path.realpath(os.path.expanduser(d)) for d in a.get("dirs", [])] + [os.path.realpath(SESSION_ARCHIVE)]
+    return any(rp.startswith(r + os.sep) for r in roots) and os.path.isfile(rp)
+
+
+def session_text(fp, max_items=400):
+    """User prompts, assistant replies and files touched from a Claude Code or Codex transcript."""
+    users, replies, files, todos = [], [], [], None
+    try:
+        with open(fp, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                msg = o.get("message") if isinstance(o.get("message"), dict) else None
+                pl = o.get("payload") if isinstance(o.get("payload"), dict) else None
+                role, content = None, None
+                if msg:
+                    role, content = msg.get("role") or o.get("type"), msg.get("content")
+                elif pl and pl.get("type") in ("message", None) and pl.get("role"):
+                    role, content = pl.get("role"), pl.get("content")
+                elif pl and pl.get("type") == "function_call":
+                    try:
+                        args = json.loads(pl.get("arguments") or "{}")
+                        for k in ("path", "file_path"):
+                            if args.get(k):
+                                files.append(args[k])
+                    except Exception:
+                        pass
+                    continue
+                if not role:
+                    continue
+                parts = [content] if isinstance(content, str) else (content or [])
+                for c in parts:
+                    if isinstance(c, str):
+                        t = c
+                    elif isinstance(c, dict) and c.get("type") in ("text", "input_text", "output_text"):
+                        t = c.get("text") or ""
+                    elif isinstance(c, dict) and c.get("type") == "tool_use":
+                        inp = c.get("input") or {}
+                        if inp.get("file_path"):
+                            files.append(inp["file_path"])
+                        if c.get("name") == "TodoWrite" and inp.get("todos"):
+                            todos = inp["todos"]
+                        continue
+                    else:
+                        continue
+                    t = t.strip()
+                    if not t or t.startswith("<") or o.get("isMeta"):
+                        continue
+                    (users if role == "user" else replies).append(t)
+    except Exception:
+        pass
+    seen, uniq = set(), []
+    for x in files:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return {"users": users[-max_items:], "replies": replies[-max_items:], "files": uniq[:80], "todos": todos}
+
+
+def session_handoff(agent_id, fp):
+    """A Markdown brief so another agent (or a fresh session) can pick up where this one stopped."""
+    rows = []
+    for a in (STATE.get("data") or {}).get("agents") or []:
+        rows += a.get("session_list") or []
+    s = next((r for r in rows if r["file"] == fp), {"id": os.path.basename(fp), "cwd": None})
+    t = session_text(fp)
+    title = s.get("title") or (t["users"][0][:80] if t["users"] else s.get("id"))
+    md = ["# Handoff: %s" % title, "",
+          "Continue this task. It was started in **%s** (session `%s`)." % (next((x["name"] for x in AGENT_DEFS if x["id"] == agent_id), agent_id), s.get("id")), ""]
+    if s.get("cwd"):
+        md.append("- Project folder: `%s`%s" % (s["cwd"], (" (git branch `%s`)" % s["branch"]) if s.get("branch") else ""))
+    if s.get("last"):
+        md.append("- Last active: %s" % datetime.fromtimestamp(s["last"]).strftime("%Y-%m-%d %H:%M"))
+    md += ["", "## The original request", "", (t["users"][0] if t["users"] else "(not found)")[:3000], ""]
+    if len(t["users"]) > 1:
+        md += ["## Later instructions (newest last)", ""] + ["- " + re.sub(r"\s+", " ", u)[:400] for u in t["users"][1:][-10:]] + [""]
+    if t["replies"]:
+        md += ["## Where the previous agent stopped", "", t["replies"][-1][:3000], ""]
+    if t["todos"]:
+        md += ["## Open to-dos", ""] + ["- [%s] %s" % ("x" if x.get("status") == "completed" else " ", x.get("content") or x.get("activeForm") or "")
+                                        for x in t["todos"]] + [""]
+    if t["files"]:
+        md += ["## Files it touched", ""] + ["- `%s`" % x for x in t["files"][:40]] + [""]
+    md += ["## Please", "", "1. Read the files above and check the current state (git status, tests).",
+           "2. Finish what's left of the original request and the open to-dos.", "3. Summarise what you changed.", ""]
+    text = "\n".join(md)
+    out_dir = os.path.join(os.path.expanduser("~/.stackradar"), "handoffs")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, "%s-%s.md" % (agent_id, re.sub(r"[^\w.-]", "_", str(s.get("id")))[:60]))
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(text)
+    cwd = s.get("cwd") or "~"
+    q = '"$(cat %s)"' % out if OS_NAME != "Windows" else '(Get-Content -Raw "%s")' % out
+    cmds = {"Claude Code": "cd %s && claude %s" % (shlex_quote(cwd), q), "Codex CLI": "cd %s && codex %s" % (shlex_quote(cwd), q),
+            "Gemini CLI": "cd %s && gemini -i %s" % (shlex_quote(cwd), q)}
+    if agent_id == "claude":
+        cmds = {"Resume in Claude Code": "cd %s && claude --resume %s" % (shlex_quote(cwd), s.get("id")), **cmds}
+    if agent_id == "codex":
+        cmds = {"Resume in Codex": "cd %s && codex resume %s" % (shlex_quote(cwd), s.get("id")), **cmds}
+    return {"ok": True, "file": out, "markdown": text, "commands": cmds}
+
+
+def shlex_quote(p):
+    import shlex
+    return shlex.quote(os.path.expanduser(p)) if OS_NAME != "Windows" else '"%s"' % p
+
+
+def session_action(agent_id, fp, action, tags=None, note=None):
+    fp = os.path.abspath(os.path.expanduser(fp or ""))
+    if not _session_allowed(agent_id, fp):
+        return {"ok": False, "error": "not a session file of that agent"}
+    if action == "handoff":
+        return session_handoff(agent_id, fp)
+    if action == "view":
+        t = session_text(fp, max_items=60)
+        return {"ok": True, **t}
+    meta = session_meta()
+    if action == "tag":
+        m = meta.setdefault(fp, {})
+        m["tags"] = [str(t)[:30] for t in (tags or [])][:10]
+        if note is not None:
+            m["note"] = str(note)[:500]
+        if not m["tags"] and not m.get("note"):
+            meta.pop(fp, None)
+        os.makedirs(os.path.dirname(SESSION_META_FILE), exist_ok=True)
+        with open(SESSION_META_FILE, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1)
+        return {"ok": True, "tags": m.get("tags", [])}
+    if action == "delete":
+        r = do_delete(fp)
+        sub = os.path.splitext(fp)[0]          # Claude Code keeps sub-agent logs next to the session
+        if r.get("ok") and os.path.isdir(sub):
+            do_delete(sub)
+        return r
+    if action == "archive":
+        home = os.path.expanduser("~")
+        dest = os.path.join(SESSION_ARCHIVE, agent_id, os.path.relpath(fp, home))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.move(fp, dest)
+        return {"ok": True, "archived_to": dest, "note": "hidden from %s; restore any time" % agent_id}
+    if action == "restore":
+        home = os.path.expanduser("~")
+        base = os.path.join(SESSION_ARCHIVE, agent_id)
+        if not fp.startswith(base + os.sep):
+            return {"ok": False, "error": "not an archived session"}
+        dest = os.path.join(home, os.path.relpath(fp, base))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.move(fp, dest)
+        return {"ok": True, "restored_to": dest}
+    return {"ok": False, "error": "unknown action"}
+
+
+def archived_sessions():
+    out = []
+    for fp in globmod.glob(os.path.join(SESSION_ARCHIVE, "*", "**", "*.jsonl"), recursive=True)[:500]:
+        try:
+            out.append({"agent": os.path.relpath(fp, SESSION_ARCHIVE).split(os.sep)[0], "file": fp,
+                        "id": os.path.splitext(os.path.basename(fp))[0], "size": os.path.getsize(fp), "last": os.path.getmtime(fp)})
+        except Exception:
+            pass
+    return sorted(out, key=lambda x: -x["last"])
+
+
+SHARED_SKILLS = os.path.join(os.path.expanduser("~"), ".agents", "skills")   # the cross-agent convention
+AGENT_SKILL_DIRS = {"Claude Code": "~/.claude/skills", "Codex CLI": "~/.codex/skills", "Gemini CLI": "~/.gemini/skills",
+                    "Hermes Agent": "~/.hermes/skills", "OpenClaw": "~/.openclaw/skills", "Cursor": "~/.cursor/skills",
+                    "Copilot": "~/.copilot/skills", "Goose": "~/.config/goose/skills", "OpenCode": "~/.config/opencode/skills",
+                    "Paperclip": "~/.paperclip/skills", "Agents (shared)": SHARED_SKILLS}
+
+
+def _known_skill(path):
+    with STATE["lock"]:
+        recs = ((STATE["data"] or {}).get("skills") or {}).get("skills") or []
+    return next((r for r in recs if r["path"] == path or r["folder"] == path), None)
+
+
+def _make_link(target, link_path):
+    """Symlink (or a directory junction on Windows when symlinks need admin)."""
+    os.makedirs(os.path.dirname(link_path), exist_ok=True)
+    try:
+        os.symlink(target, link_path, target_is_directory=os.path.isdir(target))
+        return "symlink"
+    except (OSError, NotImplementedError):
+        if OS_NAME == "Windows" and os.path.isdir(target):
+            ok, out = run_cmd(["cmd", "/c", "mklink", "/J", link_path, target], timeout=10)
+            if ok:
+                return "junction"
+        raise
+
+
+def skill_action(action, path, agent=None, keep=None):
+    """delete: to the Trash. share: link a skill into another agent's skills folder.
+    consolidate: move one copy to ~/.agents/skills/<name> and replace every copy (and the original) with a link to it."""
+    rec = _known_skill(path)
+    if not rec:
+        return {"ok": False, "error": "not a skill StackRadar found in the last scan (rescan?)"}
+    unit = rec["folder"]
+    if rec.get("plugin"):
+        return {"ok": False, "error": "this skill comes from a plugin: manage it with the agent's plugin command"}
+    if action == "delete":
+        if os.path.islink(unit):
+            os.unlink(unit)
+            return {"ok": True, "method": "removed the link (the shared copy stays)"}
+        return do_delete(unit)
+    if action == "share":
+        dest_root = AGENT_SKILL_DIRS.get(agent)
+        if not dest_root:
+            return {"ok": False, "error": "unknown agent"}
+        dest = os.path.join(os.path.expanduser(dest_root), os.path.basename(unit))
+        if os.path.exists(dest):
+            return {"ok": False, "error": "%s already has a skill named %s" % (agent, os.path.basename(unit))}
+        how = _make_link(os.path.realpath(unit), dest)
+        return {"ok": True, "method": how, "linked": dest}
+    if action == "consolidate":
+        with STATE["lock"]:
+            dups = ((STATE["data"] or {}).get("skills") or {}).get("duplicates") or []
+        group = next((d for d in dups if path in d["paths"]), None)
+        members = [_known_skill(p) for p in (group["paths"] if group else [path])]
+        members = [m for m in members if m and not m.get("plugin")]
+        keep_rec = _known_skill(keep) if keep else rec
+        if not keep_rec:
+            return {"ok": False, "error": "choose which copy to keep"}
+        name = os.path.basename(keep_rec["folder"]) if keep_rec["kind"] == "skill" else os.path.basename(keep_rec["path"])
+        shared = os.path.join(SHARED_SKILLS if keep_rec["kind"] == "skill" else os.path.join(os.path.dirname(SHARED_SKILLS), "commands"), name)
+        src = os.path.realpath(keep_rec["folder"])
+        log = []
+        if os.path.realpath(shared) != src:
+            if os.path.exists(shared):
+                return {"ok": False, "error": "%s already exists: remove or rename it first" % shared}
+            os.makedirs(os.path.dirname(shared), exist_ok=True)
+            shutil.move(src, shared)
+            log.append("moved %s → %s" % (src, shared))
+        for m in members:
+            loc = m["folder"]
+            if os.path.realpath(loc) == os.path.realpath(shared) and not os.path.islink(loc):
+                continue
+            if os.path.islink(loc):
+                os.unlink(loc)
+            elif os.path.exists(loc):
+                r = do_delete(loc)
+                if not r.get("ok"):
+                    log.append("couldn't replace %s: %s" % (loc, r.get("error")))
+                    continue
+                log.append("moved the old copy at %s to the Trash" % loc)
+            how = _make_link(shared, loc)
+            log.append("linked %s → shared (%s)" % (loc, how))
+        if not os.path.lexists(keep_rec["folder"]):
+            _make_link(shared, keep_rec["folder"])
+        return {"ok": True, "shared": shared, "log": log}
+    return {"ok": False, "error": "unknown action"}
+
+
 def agents_scan(procs, listeners, skills=None):
     home = os.path.expanduser("~")
     out = []
@@ -3635,7 +4762,10 @@ def agents_scan(procs, listeners, skills=None):
         for path, spec in a.get("mcp", []):
             rec["mcp"] += [n for n in _mcp_names(path, spec) if n not in rec["mcp"]]
         if a["id"] == "codex" and sess:
-            rec["tokens_in"], rec["tokens_out"] = _codex_tokens(sorted(sess, key=lambda f: -os.path.getmtime(f)))
+            cu = codex_usage(sorted(sess, key=lambda f: -os.path.getmtime(f)))
+            rec["tokens_in"], rec["tokens_out"] = cu["in"], cu["out"]
+            rec["usage"] = {"by_model": cu["by_model"], "by_surface": cu["by_surface"]}
+            rec["session_list"] = _session_rows(cu["sessions_list"])
         if a["id"] == "claude":
             st = os.path.join(home, ".claude", "settings.json")
             try:
@@ -3654,6 +4784,9 @@ def agents_scan(procs, listeners, skills=None):
             if skills and skills.get("claude_totals"):
                 t = skills["claude_totals"]
                 rec["tokens_in"], rec["tokens_out"] = t["in"], t["out"]
+                rec["cache_tokens"] = t.get("cache_read", 0) + t.get("cache_write", 0)
+                rec["usage"] = {"by_model": t.get("by_model") or {}, "by_surface": t.get("by_surface") or {}}
+                rec["session_list"] = _session_rows(t.get("sessions_list") or [])
                 if t.get("models"):
                     rec["notes"].append("models: " + ", ".join("%s×%d" % kv for kv in sorted(t["models"].items(), key=lambda kv: -kv[1])[:3]))
         if a["id"] == "ollama" and dirs:
@@ -3670,7 +4803,15 @@ def agents_scan(procs, listeners, skills=None):
             if names and (first in names or any(("/" + n + " ") in (cmd.lower() + " ") or ("node_modules/" + n) in cmd.lower() for n in names)):
                 if p["pid"] != os.getpid():
                     rec["running"].append({"pid": p["pid"], "cmd": sanitize_cmd(cmd[:160]), "cwd": p.get("cwd")})
-        rec["running"] = rec["running"][:8]
+        rec["running"] = rec["running"][:20]
+        det = _proc_details([r["pid"] for r in rec["running"]])
+        usage = _proc_usage([r["pid"] for r in rec["running"]])
+        for r in rec["running"]:
+            d = det.get(r["pid"]) or {}
+            r["started"], r["user"] = d.get("started"), d.get("user")
+            r["cpu"], r["rss"] = (usage.get(r["pid"]) or (None, None))
+        rec["running"].sort(key=lambda r: -(r.get("started") or 0))
+        rec["package"] = AGENT_PACKAGES.get(a["id"])
         for l in listeners or []:
             if l.get("port") in a.get("ports", []) or (l.get("proc") or "").lower() in names:
                 rec["ports"].append(l["port"])
@@ -3689,7 +4830,7 @@ DUP_MIN_SIZE = 4096
 
 
 def _hash_file(fp, head_only=False):
-    h = hashlib.sha1()
+    h = hashlib.sha256()
     try:
         with open(fp, "rb") as f:
             if head_only:
@@ -3702,45 +4843,177 @@ def _hash_file(fp, head_only=False):
     return h.hexdigest()
 
 
-def duplicates_scan(projects, budget_bytes=2_000_000_000, progress=None):
-    by_size = {}
-    for p in projects:
-        files, _ = walk_files(p["path"], cap_files=8000, cap_bytes=float("inf"))
-        for fp in files:
-            try:
-                sz = os.path.getsize(fp)
-            except Exception:
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".svg", ".ico"}
+LOOKALIKE_EXTS = IMAGE_EXTS | {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".ppt", ".pptx", ".key", ".pages",
+                               ".numbers", ".mp4", ".mov", ".mp3", ".wav", ".zip", ".tar", ".gz", ".dmg", ".psd",
+                               ".ai", ".sketch", ".fig", ".json", ".sqlite", ".db", ".md", ".txt", ".ttf", ".otf", ".woff2"}
+# names every project has: same name, different content is normal for these
+BOILERPLATE_NAMES = {"readme.md", "license", "license.md", "license.txt", "changelog.md", "package.json", "tsconfig.json",
+                     "index.html", "favicon.ico", "manifest.json", "robots.txt", ".gitignore", "requirements.txt",
+                     "contributing.md", "notes.md", "todo.md", "claude.md", "agents.md", "settings.json",
+                     "launch.json", "tasks.json", "extensions.json", "package-lock.json", "composer.json", "logo.png",
+                     "logo.svg", "icon.png", "icon.svg", "screenshot.png", "data.json", "config.json", "test.txt",
+                     "skill.md"}   # skills have their own duplicate view
+
+
+def image_dims(fp):
+    """(width, height) for PNG / GIF / JPEG / WebP from the header, else None. Stdlib only."""
+    try:
+        with open(fp, "rb") as f:
+            head = f.read(32)
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+            if head[:6] in (b"GIF87a", b"GIF89a"):
+                return int.from_bytes(head[6:8], "little"), int.from_bytes(head[8:10], "little")
+            if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+                if head[12:16] == b"VP8X":
+                    return 1 + int.from_bytes(head[24:27], "little"), 1 + int.from_bytes(head[27:30], "little")
+                return None
+            if head[:2] == b"\xff\xd8":
+                f.seek(2)
+                for _ in range(400):
+                    b = f.read(1)
+                    while b and b != b"\xff":
+                        b = f.read(1)
+                    while b == b"\xff":
+                        b = f.read(1)
+                    if not b:
+                        return None
+                    marker = b[0]
+                    if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                        continue
+                    ln = int.from_bytes(f.read(2), "big")
+                    if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                        d = f.read(5)
+                        return int.from_bytes(d[3:5], "big"), int.from_bytes(d[1:3], "big")
+                    f.seek(ln - 2, 1)
+    except Exception:
+        return None
+    return None
+
+
+def _file_info(fp, proj):
+    try:
+        st = os.stat(fp)
+    except Exception:
+        return None
+    return {"path": fp, "project": proj, "name": os.path.basename(fp), "size": st.st_size, "mtime": st.st_mtime}
+
+
+def _copyish(name):
+    return bool(re.search(r"\(\d+\)|copy|backup|\bold\b|\bbak\b|~$", name, re.I))
+
+
+def duplicates_scan(projects, budget_bytes=2_000_000_000, progress=None, extra_folders=()):
+    """Three clearly separated results:
+       groups      exact duplicates: same file name + same size + same content (SHA-256 of every byte)
+       renamed     same size + same content but different file names (renamed copies)
+       lookalikes  same file name but different content (NOT duplicates: e.g. two versions of an image)."""
+    files, seen = [], set()
+    sources = [(p["path"], p["name"], p.get("children")) for p in projects]
+    sources += [(f, os.path.basename(f.rstrip(os.sep)) or f, None) for f in extra_folders]
+    for path, name, children in sources:
+        lst, _ = walk_files(path, cap_files=8000, cap_bytes=float("inf"), skip_paths=children)
+        for fp in lst:
+            rp = os.path.realpath(fp)
+            if rp in seen:
                 continue
-            if sz >= DUP_MIN_SIZE:
-                by_size.setdefault(sz, []).append((fp, p["name"]))
-    groups, hashed = [], 0
-    for sz, lst in sorted(by_size.items(), key=lambda kv: -kv[0]):
-        if len(lst) < 2:
-            continue
+            seen.add(rp)
+            info = _file_info(fp, name)
+            if info and info["size"] > 0:
+                files.append(info)
+    by_size = {}
+    for fi in files:
+        if fi["size"] >= DUP_MIN_SIZE:
+            by_size.setdefault(fi["size"], []).append(fi)
+    cand_sizes = {sz: lst for sz, lst in by_size.items() if len(lst) > 1}
+    if progress is not None:
+        progress["dup_total"] = min(budget_bytes, sum(sz * len(l) for sz, l in cand_sizes.items()))
+        progress["dup_done"] = 0
+    content = {}          # path -> sha256 (only for files that share a size with another file)
+    hashed = 0
+    for sz, lst in sorted(cand_sizes.items(), key=lambda kv: -kv[0]):
         heads = {}
-        for fp, proj in lst:
-            hh = _hash_file(fp, head_only=True)
+        for fi in lst:
+            hh = _hash_file(fi["path"], head_only=True)
             if hh:
-                heads.setdefault(hh, []).append((fp, proj))
+                heads.setdefault(hh, []).append(fi)
         for cand in heads.values():
             if len(cand) < 2:
+                if progress is not None:
+                    progress["dup_done"] = min(progress["dup_total"], progress["dup_done"] + min(sz, 65536))
                 continue
-            full = {}
-            for fp, proj in cand:
+            for fi in cand:
                 if hashed + sz > budget_bytes:
                     break
                 hashed += sz
-                fh = _hash_file(fp) if sz > 65536 else "h"
-                full.setdefault(fh, []).append({"path": fp, "project": proj})
-            for fh, items in full.items():
-                if fh and len(items) > 1:
-                    # keep the "original": no copy-ish suffix, then the shortest path
-                    items.sort(key=lambda i: (bool(re.search(r"\(\d+\)|copy|backup|\bold\b", os.path.basename(i["path"]), re.I)),
-                                              len(i["path"]), i["path"]))
-                    groups.append({"size": sz, "count": len(items), "wasted": sz * (len(items) - 1),
-                                   "name": os.path.basename(items[0]["path"]), "files": items[:20],
-                                   "cross_project": len({i["project"] for i in items}) > 1})
+                fh = _hash_file(fi["path"]) if sz > 65536 else _hash_file(fi["path"], head_only=True)
+                if fh:
+                    content[fi["path"]] = fh
+                if progress is not None:
+                    progress["dup_done"] = min(progress["dup_total"], progress["dup_done"] + sz)
+    by_hash = {}
+    for fi in files:
+        h = content.get(fi["path"])
+        if h:
+            by_hash.setdefault(h, []).append(fi)
+    groups, renamed = [], []
+    for h, items in by_hash.items():
+        if len(items) < 2:
+            continue
+        by_name = {}
+        for fi in items:
+            by_name.setdefault(fi["name"].lower(), []).append(fi)
+        for nm, same in by_name.items():
+            if len(same) > 1:
+                same.sort(key=lambda i: (_copyish(i["name"]), i["mtime"], len(i["path"])))
+                sz = same[0]["size"]
+                groups.append({"match": "exact", "name": same[0]["name"], "size": sz, "count": len(same),
+                               "wasted": sz * (len(same) - 1), "hash": h[:16], "files": same[:40],
+                               "cross_project": len({i["project"] for i in same}) > 1})
+        if len(by_name) > 1:
+            items.sort(key=lambda i: (_copyish(i["name"]), i["mtime"], len(i["path"])))
+            renamed.append({"match": "renamed", "names": sorted({i["name"] for i in items}), "size": items[0]["size"],
+                            "count": len(items), "wasted": items[0]["size"] * (len(items) - 1), "hash": h[:16],
+                            "files": items[:40], "cross_project": len({i["project"] for i in items}) > 1})
     groups.sort(key=lambda g: -g["wasted"])
+    renamed.sort(key=lambda g: -g["wasted"])
+    # look-alikes: same name, different content
+    by_name = {}
+    for fi in files:
+        nm = fi["name"].lower()
+        ext = os.path.splitext(nm)[1]
+        if nm in BOILERPLATE_NAMES or ext not in LOOKALIKE_EXTS:
+            continue
+        by_name.setdefault(nm, []).append(fi)
+    lookalikes = []
+    for nm, items in by_name.items():
+        if len(items) < 2:
+            continue
+        variants = {}
+        for fi in items:
+            key = content.get(fi["path"]) or ("size:%d" % fi["size"])
+            if key.startswith("size:") and sum(1 for x in items if x["size"] == fi["size"]) > 1:
+                key = _hash_file(fi["path"]) or key       # same size: compare bytes to be sure
+                content[fi["path"]] = key
+            variants.setdefault(key, []).append(fi)
+        if len(variants) < 2:
+            continue
+        out = []
+        for key, vs in variants.items():
+            for fi in vs:
+                row = dict(fi, variant=key[:12], copies=len(vs))
+                if os.path.splitext(nm)[1] in IMAGE_EXTS:
+                    d = image_dims(fi["path"])
+                    if d:
+                        row["dims"] = "%d×%d" % d
+                out.append(row)
+        out.sort(key=lambda r: -r["mtime"])
+        sizes = {r["size"] for r in out}
+        lookalikes.append({"match": "lookalike", "name": items[0]["name"], "variants": len(variants), "count": len(out),
+                           "same_size": len(sizes) == 1, "files": out[:40],
+                           "why": "same name and size, different content" if len(sizes) == 1 else "same name, different size and content"})
+    lookalikes.sort(key=lambda g: (-g["variants"], -g["count"]))
     # duplicate / copied projects
     dproj = []
     by_remote, by_base = {}, {}
@@ -3757,7 +5030,11 @@ def duplicates_scan(projects, budget_bytes=2_000_000_000, progress=None):
         if len(ps) > 1 and not any(set(x["path"] for x in ps) == set(y["path"] for y in d["projects"]) for d in dproj):
             dproj.append({"reason": "looks like a copy (same base name)", "key": b, "projects": [{"name": x["name"], "path": x["path"], "size": x.get("size")} for x in ps]})
     return {"groups": groups[:300], "wasted_total": sum(g["wasted"] for g in groups),
-            "group_count": len(groups), "projects": dproj[:60], "min_size": DUP_MIN_SIZE}
+            "group_count": len(groups), "renamed": renamed[:200], "renamed_count": len(renamed),
+            "renamed_wasted": sum(g["wasted"] for g in renamed), "lookalikes": lookalikes[:200],
+            "lookalike_count": len(lookalikes), "files_checked": len(files), "bytes_hashed": hashed,
+            "budget_hit": hashed >= budget_bytes, "projects": dproj[:60], "min_size": DUP_MIN_SIZE,
+            "extra_folders": list(extra_folders)}
 
 
 # ---------------------------------------------------------------------------
@@ -3870,6 +5147,658 @@ def build_update_command(scope, manager, packages, path=None):
     raise ValueError("unknown scope")
 
 
+# ---------------------------------------------------------------------------
+# Tools & packages inventory: what's installed, which version, what's newer,
+# when you last used it, what nothing uses, plus update / remove as jobs.
+# ---------------------------------------------------------------------------
+
+CLI_TOOLS = [
+    # (command, display name, version args, group)
+    ("git", "Git", None, "core"), ("gh", "GitHub CLI", None, "core"), ("make", "make", None, "core"),
+    ("cmake", "CMake", None, "core"), ("zsh", "zsh", None, "shell"), ("bash", "bash", None, "shell"), ("fish", "fish", None, "shell"),
+    ("tmux", "tmux", ["-V"], "shell"), ("node", "Node.js", None, "javascript"), ("npm", "npm", None, "javascript"),
+    ("pnpm", "pnpm", None, "javascript"), ("yarn", "Yarn", None, "javascript"), ("bun", "Bun", None, "javascript"),
+    ("deno", "Deno", None, "javascript"), ("python3", "Python", None, "python"), ("pip3", "pip", None, "python"),
+    ("pipx", "pipx", None, "python"), ("uv", "uv", None, "python"), ("poetry", "Poetry", None, "python"),
+    ("conda", "conda", None, "python"), ("pyenv", "pyenv", None, "python"), ("ruby", "Ruby", ["-v"], "other languages"),
+    ("gem", "RubyGems", None, "other languages"), ("go", "Go", ["version"], "other languages"), ("rustc", "Rust", None, "other languages"),
+    ("cargo", "Cargo", None, "other languages"), ("java", "Java", ["-version"], "other languages"), ("php", "PHP", None, "other languages"),
+    ("composer", "Composer", None, "other languages"), ("dotnet", ".NET", None, "other languages"), ("swift", "Swift", None, "other languages"),
+    ("flutter", "Flutter", None, "other languages"), ("docker", "Docker", None, "containers & cloud"), ("kubectl", "kubectl", ["version", "--client"], "containers & cloud"),
+    ("helm", "Helm", ["version", "--short"], "containers & cloud"), ("terraform", "Terraform", None, "containers & cloud"),
+    ("aws", "AWS CLI", None, "containers & cloud"), ("gcloud", "Google Cloud CLI", None, "containers & cloud"), ("az", "Azure CLI", None, "containers & cloud"),
+    ("vercel", "Vercel CLI", None, "containers & cloud"), ("netlify", "Netlify CLI", None, "containers & cloud"), ("wrangler", "Wrangler", None, "containers & cloud"),
+    ("firebase", "Firebase CLI", None, "containers & cloud"), ("supabase", "Supabase CLI", None, "containers & cloud"),
+    ("brew", "Homebrew", None, "package managers"), ("claude", "Claude Code", None, "AI agents"), ("codex", "Codex CLI", None, "AI agents"),
+    ("gemini", "Gemini CLI", None, "AI agents"), ("ollama", "Ollama", None, "AI agents"), ("aider", "Aider", None, "AI agents"),
+    ("ffmpeg", "FFmpeg", ["-version"], "media"), ("jq", "jq", None, "utilities"), ("rg", "ripgrep", None, "utilities"),
+    ("fzf", "fzf", None, "utilities"), ("bat", "bat", None, "utilities"), ("htop", "htop", None, "utilities"), ("wget", "wget", None, "utilities"),
+    ("curl", "curl", None, "utilities"), ("psql", "PostgreSQL client", None, "databases"), ("mysql", "MySQL client", None, "databases"),
+    ("redis-cli", "Redis CLI", None, "databases"), ("sqlite3", "SQLite", None, "databases"), ("mongosh", "MongoDB shell", None, "databases"),
+]
+INV = {"lock": threading.Lock(), "data": None, "running": False}
+VERSION_RX = re.compile(r"(\d+\.\d+(?:\.\d+)?(?:[-+._][0-9A-Za-z.]+)?)")
+
+
+def shell_history_usage():
+    """{command word: {"last": ts or None, "count": n}} from zsh / bash / fish history."""
+    use = {}
+
+    def bump(word, ts):
+        word = os.path.basename(word)
+        if not word or len(word) > 60:
+            return
+        u = use.setdefault(word, {"last": None, "count": 0})
+        u["count"] += 1
+        if ts and (u["last"] is None or ts > u["last"]):
+            u["last"] = ts
+
+    def words(cmd):
+        out = []
+        for seg in re.split(r"\|\||&&|[|;]", cmd):
+            parts = seg.strip().split()
+            while parts and (re.match(r"^\w+=", parts[0]) or parts[0] in ("sudo", "time", "nohup", "exec", "command", "env", "npx", "bunx", "pnpx", "uvx")):
+                if parts[0] in ("npx", "bunx", "pnpx", "uvx") and len(parts) > 1:
+                    out.append(parts[1])
+                parts = parts[1:]
+            if parts:
+                out.append(parts[0])
+                if parts[0] in ("brew", "npm", "pip", "pip3", "pipx", "cargo", "gem", "go") and len(parts) > 2 and parts[1] in ("install", "uninstall", "upgrade", "run", "exec"):
+                    out.append(parts[0] + ":" + parts[2])
+        return out
+
+    home = os.path.expanduser("~")
+    for fn in (".zsh_history", ".zhistory", ".bash_history", ".histfile"):
+        fp = os.path.join(home, fn)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            mtime = os.path.getmtime(fp)
+            with open(fp, "rb") as f:
+                f.seek(max(0, os.path.getsize(fp) - 8_000_000))
+                text = f.read().decode("utf-8", "replace")
+        except Exception:
+            continue
+        pending_ts = None
+        for line in text.splitlines():
+            m = re.match(r"^: (\d{9,11}):\d+;(.*)$", line)
+            if m:
+                for w in words(m.group(2)):
+                    bump(w, int(m.group(1)))
+                continue
+            m = re.match(r"^#(\d{9,11})$", line)
+            if m:
+                pending_ts = int(m.group(1))
+                continue
+            for w in words(line):
+                bump(w, pending_ts)
+            pending_ts = None
+        _ = mtime
+    fish = os.path.join(home, ".local", "share", "fish", "fish_history")
+    if os.path.isfile(fish):
+        try:
+            cmd = None
+            for line in open(fish, encoding="utf-8", errors="replace"):
+                if line.startswith("- cmd: "):
+                    cmd = line[7:].strip()
+                elif line.strip().startswith("when:") and cmd:
+                    ts = int(line.split(":", 1)[1].strip() or 0)
+                    for w in words(cmd):
+                        bump(w, ts)
+                    cmd = None
+        except Exception:
+            pass
+    return use
+
+
+def _install_method(path):
+    rp = os.path.realpath(path or "")
+    low = rp.lower()
+    if "/cellar/" in low or "/homebrew/" in low or "/linuxbrew/" in low or "/caskroom/" in low:
+        m = re.search(r"/(?:Cellar|Caskroom)/([^/]+)/", rp)
+        return "brew", (m.group(1) if m else None)
+    if "/node_modules/" in low or "/.npm-global/" in low:
+        m = re.search(r"/node_modules/((?:@[^/]+/)?[^/]+)/", rp)
+        return "npm", (m.group(1) if m else None)
+    if "/.nvm/" in low or "/.volta/" in low or "/.fnm/" in low:
+        return "node version manager", None
+    if "/pipx/venvs/" in low:
+        m = re.search(r"/pipx/venvs/([^/]+)/", rp)
+        return "pipx", (m.group(1) if m else None)
+    if "/.cargo/bin/" in low:
+        return "cargo", os.path.basename(rp)
+    if "/.pyenv/" in low:
+        return "pyenv", None
+    if "/.local/bin/" in low or "site-packages" in low:
+        return "pip / user", None
+    if low.startswith(("/usr/bin", "/bin", "/usr/sbin", "/sbin", "/system/", "c:\\windows")):
+        return "system", None
+    if "/applications/" in low:
+        return "app bundle", None
+    return "manual", None
+
+
+def _tool_version(cmd, args):
+    path = shutil.which(cmd)
+    if not path:
+        return None
+    ok, out = run_cmd([cmd] + (args or ["--version"]), timeout=8)
+    line = next((l.strip() for l in (out or "").splitlines() if l.strip()), "")
+    m = VERSION_RX.search(line) or VERSION_RX.search(out or "")
+    return {"path": path, "version": m.group(1) if m else (line[:40] or None), "raw": line[:160]}
+
+
+def _py_dists():
+    """Packages of the Python your shell uses (not StackRadar's own): name, version, requires, location, installed time."""
+    py = shutil.which("python3") or shutil.which("python")
+    if not py:
+        return py, []
+    script = ("import json,os\n"
+              "from importlib import metadata as m\n"
+              "out=[]\n"
+              "for d in m.distributions():\n"
+              "  try:\n"
+              "    n=d.metadata['Name']\n"
+              "    p=getattr(d,'_path',None)\n"
+              "    t=os.path.getmtime(p) if p else None\n"
+              "    req=[r.split(';')[0].split('[')[0].split(' ')[0].split('>')[0].split('<')[0].split('=')[0].split('!')[0].split('~')[0].strip() for r in (d.requires or []) if 'extra ==' not in r]\n"
+              "    out.append({'name':n,'version':d.version,'requires':req,'location':str(p.parent) if p else None,'installed':t,'summary':(d.metadata.get('Summary') or '')[:160]})\n"
+              "  except Exception: pass\n"
+              "print(json.dumps(out))\n")
+    ok, out = run_cmd([py, "-c", script], timeout=30)
+    try:
+        return py, json.loads(out.strip().splitlines()[-1])
+    except Exception:
+        return py, []
+
+
+def _project_dep_names():
+    with STATE["lock"]:
+        projects = list((STATE["data"] or {}).get("projects") or [])
+    used = {}
+    for p in projects:
+        for d in (p.get("dependencies") or []):
+            nm = (d.get("name") or "").lower().replace("_", "-")
+            if nm:
+                used.setdefault(nm, set()).add(p["name"])
+    return used
+
+
+def _norm(n):
+    return (n or "").lower().replace("_", "-").replace(".", "-")
+
+
+def _age_label(ts):
+    if not ts:
+        return None
+    days = (time.time() - ts) / 86400
+    return "very old" if days > 365 * 2 else "old" if days > 365 else None
+
+
+def zsh_plugins():
+    """oh-my-zsh (and zinit / antidote / zplug) plugins: enabled vs installed-but-unused, with git dates."""
+    home = os.path.expanduser("~")
+    zshrc = os.path.join(home, ".zshrc")
+    text = ""
+    try:
+        text = open(zshrc, encoding="utf-8", errors="replace").read()
+    except Exception:
+        pass
+    enabled = set()
+    m = re.search(r"^\s*plugins=\(([^)]*)\)", text, re.M | re.S)
+    if m:
+        enabled = set(re.findall(r"[\w@.+-]+", m.group(1)))
+    theme = (re.search(r"^\s*ZSH_THEME=[\"']?([^\"'\s]+)", text, re.M) or [None, None])[1]
+    omz = os.environ.get("ZSH") or os.path.join(home, ".oh-my-zsh")
+    out = {"framework": None, "theme": theme, "plugins": [], "zshrc": zshrc if text else None}
+    if os.path.isdir(omz):
+        info = scan_git(omz) if os.path.isdir(os.path.join(omz, ".git")) else {}
+        out["framework"] = {"name": "oh-my-zsh", "path": omz, "last_update": info.get("last_date"), "commit": info.get("last_commit")}
+        for base, kind in ((os.path.join(omz, "custom", "plugins"), "custom"), (os.path.join(omz, "plugins"), "bundled")):
+            if not os.path.isdir(base):
+                continue
+            for name in sorted(os.listdir(base)):
+                fp = os.path.join(base, name)
+                if not os.path.isdir(fp) or name.startswith("."):
+                    continue
+                if kind == "bundled" and name not in enabled:
+                    continue          # 300+ bundled plugins ship with oh-my-zsh; only list the ones you use
+                g = scan_git(fp) if os.path.isdir(os.path.join(fp, ".git")) else {}
+                out["plugins"].append({"name": name, "kind": kind, "path": fp, "enabled": name in enabled,
+                                       "remote": g.get("remote"), "last_update": g.get("last_date"),
+                                       "can_update": bool(g.get("vcs")), "can_remove": kind == "custom"})
+    for name in sorted(enabled):
+        if not any(p["name"] == name for p in out["plugins"]):
+            out["plugins"].append({"name": name, "kind": "enabled, not found", "path": None, "enabled": True,
+                                   "can_update": False, "can_remove": False})
+    for d, fw in ((os.path.join(home, ".local", "share", "zinit", "plugins"), "zinit"), (os.path.join(home, ".zinit", "plugins"), "zinit"),
+                  (os.path.join(home, ".zplug", "repos"), "zplug"), (os.path.join(home, ".cache", "antidote"), "antidote")):
+        if os.path.isdir(d):
+            for name in sorted(os.listdir(d))[:80]:
+                fp = os.path.join(d, name)
+                if os.path.isdir(fp):
+                    g = scan_git(fp) if os.path.isdir(os.path.join(fp, ".git")) else {}
+                    out["plugins"].append({"name": name.replace("---", "/"), "kind": fw, "path": fp, "enabled": name.split("---")[-1] in text,
+                                           "remote": g.get("remote"), "last_update": g.get("last_date"),
+                                           "can_update": bool(g.get("vcs")), "can_remove": True})
+    return out
+
+
+def tools_inventory(force=False):
+    with INV["lock"]:
+        if INV["data"] and not force and time.time() - INV["data"]["checked_at"] < 900:
+            return INV["data"]
+    hist = shell_history_usage()
+    used_by_projects = _project_dep_names()
+    outdated = (GLOBAL_OUTDATED["data"] or {}).get("managers") or {}
+    latest = {(k, _norm(i["name"])): i.get("latest") for k, m in outdated.items() for i in m.get("items", [])}
+
+    def last_use(*names):
+        best = {"last": None, "count": 0}
+        for n in names:
+            u = hist.get(n)
+            if u:
+                best["count"] += u["count"]
+                if u["last"] and (best["last"] is None or u["last"] > best["last"]):
+                    best["last"] = u["last"]
+        return best
+
+    # CLI tools (versions in parallel)
+    tools = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(_tool_version, c, a): (c, n, g) for c, n, a, g in CLI_TOOLS if shutil.which(c)}
+        for fut in concurrent.futures.as_completed(futs):
+            c, n, g = futs[fut]
+            v = fut.result() or {}
+            method, pkg = _install_method(v.get("path"))
+            u = last_use(c)
+            try:
+                atime = os.stat(os.path.realpath(v["path"])).st_atime if v.get("path") else None
+            except Exception:
+                atime = None
+            mgr = {"brew": "brew", "npm": "npm", "pipx": "pipx", "cargo": "cargo"}.get(method)
+            newest = latest.get((mgr, _norm(pkg or c))) if mgr else None
+            tools.append({"cmd": c, "name": n, "group": g, "version": v.get("version"), "raw": v.get("raw"), "path": v.get("path"),
+                          "method": method, "package": pkg, "manager": mgr, "latest": newest,
+                          "outdated": bool(newest and newest != v.get("version")),
+                          "last_used": u["last"], "uses": u["count"], "last_access": atime,
+                          "can_update": mgr in ("brew", "npm", "pipx", "cargo"), "can_remove": mgr in ("brew", "npm", "pipx", "cargo")})
+    tools.sort(key=lambda t: (t["group"], t["name"].lower()))
+
+    managers = {}
+    # pip
+    py, dists = _py_dists()
+    if dists:
+        required = {}
+        for d in dists:
+            for r in d.get("requires") or []:
+                required.setdefault(_norm(r), set()).add(d["name"])
+        items = []
+        for d in dists:
+            k = _norm(d["name"])
+            u = last_use(d["name"].lower(), "pip:" + d["name"].lower(), "pip3:" + d["name"].lower())
+            items.append({"name": d["name"], "version": d["version"], "latest": latest.get(("pip", k)),
+                          "summary": d.get("summary"), "installed": d.get("installed"), "location": d.get("location"),
+                          "used_by_projects": sorted(used_by_projects.get(k, set()))[:8],
+                          "required_by": sorted(required.get(k, set()))[:8], "last_used": u["last"], "uses": u["count"],
+                          "age": _age_label(d.get("installed"))})
+        for it in items:
+            it["outdated"] = bool(it["latest"] and it["latest"] != it["version"])
+            it["unused"] = not (it["used_by_projects"] or it["required_by"] or it["uses"]) and it["name"].lower() not in ("pip", "setuptools", "wheel")
+        managers["pip"] = {"label": "Python packages (%s)" % py, "items": sorted(items, key=lambda i: i["name"].lower()),
+                           "checked_latest": "pip" in outdated}
+    # npm global
+    if shutil.which("npm"):
+        ok, out = run_cmd(["npm", "ls", "-g", "--depth=0", "--json"], timeout=40)
+        try:
+            deps = (json.loads(out or "{}").get("dependencies") or {})
+        except Exception:
+            deps = {}
+        ok2, root = run_cmd(["npm", "root", "-g"], timeout=15)
+        items = []
+        for n, i in deps.items():
+            pdir = os.path.join(root.strip(), n) if ok2 else None
+            try:
+                inst = os.path.getmtime(os.path.join(pdir, "package.json")) if pdir else None
+            except Exception:
+                inst = None
+            bins = []
+            try:
+                pj = parse_package_json(os.path.join(pdir, "package.json")) if pdir else {}
+                b = pj.get("bin")
+                bins = list(b.keys()) if isinstance(b, dict) else ([pj.get("name", n).split("/")[-1]] if b else [])
+            except Exception:
+                pass
+            u = last_use(*(bins + ["npm:" + n]))
+            ver = (i or {}).get("version")
+            items.append({"name": n, "version": ver, "latest": latest.get(("npm", _norm(n))), "installed": inst,
+                          "bins": bins, "last_used": u["last"], "uses": u["count"], "age": _age_label(inst),
+                          "used_by_projects": sorted(used_by_projects.get(_norm(n), set()))[:8]})
+        for it in items:
+            it["outdated"] = bool(it["latest"] and it["latest"] != it["version"])
+            it["unused"] = not it["uses"] and it["name"] not in ("npm", "corepack")
+        managers["npm"] = {"label": "npm global packages", "items": sorted(items, key=lambda i: i["name"].lower()),
+                           "checked_latest": "npm" in outdated}
+    # Homebrew
+    if shutil.which("brew"):
+        ok, out = run_cmd(["brew", "info", "--installed", "--json=v2"], timeout=90)
+        try:
+            data = json.loads(out or "{}")
+        except Exception:
+            data = {}
+        ok2, leaves = run_cmd(["brew", "leaves"], timeout=30)
+        leaves = set((leaves or "").split())
+        items = []
+        for f in data.get("formulae", []):
+            inst = (f.get("installed") or [{}])[0]
+            name = f.get("name")
+            u = last_use(name, *(f.get("aliases") or []), "brew:" + name)
+            items.append({"name": name, "kind": "formula", "version": inst.get("version"),
+                          "latest": ((f.get("versions") or {}).get("stable")), "summary": (f.get("desc") or "")[:160],
+                          "installed": inst.get("time"), "on_request": inst.get("installed_on_request"),
+                          "dependency_only": name not in leaves, "last_used": u["last"], "uses": u["count"],
+                          "age": _age_label(inst.get("time"))})
+        for c in data.get("casks", []):
+            u = last_use(c.get("token"), "brew:" + c.get("token", ""))
+            items.append({"name": c.get("token"), "kind": "app (cask)", "version": c.get("installed"), "latest": c.get("version"),
+                          "summary": (c.get("desc") or "")[:160], "installed": c.get("installed_time"), "on_request": True,
+                          "dependency_only": False, "last_used": u["last"], "uses": u["count"], "age": _age_label(c.get("installed_time"))})
+        for it in items:
+            it["outdated"] = bool(it["latest"] and it["version"] and it["latest"] != it["version"])
+            it["unused"] = not it["uses"] and not it["dependency_only"] and it["kind"] == "formula"
+        managers["brew"] = {"label": "Homebrew", "items": sorted(items, key=lambda i: i["name"].lower()), "checked_latest": True}
+    # pipx
+    if shutil.which("pipx"):
+        ok, out = run_cmd(["pipx", "list", "--json"], timeout=30)
+        items = []
+        try:
+            for n, v in (json.loads(out or "{}").get("venvs") or {}).items():
+                md = (v.get("metadata") or {}).get("main_package") or {}
+                apps = md.get("apps") or []
+                u = last_use(*apps)
+                items.append({"name": n, "version": md.get("package_version"), "latest": None, "bins": apps,
+                              "last_used": u["last"], "uses": u["count"], "unused": not u["count"]})
+        except Exception:
+            pass
+        if items:
+            managers["pipx"] = {"label": "pipx apps", "items": items, "checked_latest": False}
+    # cargo
+    if shutil.which("cargo"):
+        ok, out = run_cmd(["cargo", "install", "--list"], timeout=20)
+        items = []
+        cur = None
+        for line in (out or "").splitlines():
+            m = re.match(r"^(\S+) v(\S+):", line)
+            if m:
+                cur = {"name": m.group(1), "version": m.group(2), "latest": None, "bins": []}
+                items.append(cur)
+            elif cur and line.startswith("    "):
+                cur["bins"].append(line.strip())
+        for it in items:
+            u = last_use(*it["bins"])
+            it.update({"last_used": u["last"], "uses": u["count"], "unused": not u["count"]})
+        if items:
+            managers["cargo"] = {"label": "Cargo installs", "items": items, "checked_latest": False}
+    res = {"checked_at": time.time(), "tools": tools, "managers": managers, "zsh": zsh_plugins(),
+           "history_found": bool(hist), "latest_checked_at": (GLOBAL_OUTDATED["data"] or {}).get("checked_at")}
+    with INV["lock"]:
+        INV["data"] = res
+    return res
+
+
+def build_remove_command(manager, name):
+    if not isinstance(name, str) or not PKG_NAME_RX.match(name) or len(name) > 214:
+        raise ValueError("invalid package name")
+    if manager == "brew":
+        return ["brew", "uninstall", name]
+    if manager == "npm":
+        return ["npm", "uninstall", "-g", name]
+    if manager == "pip":
+        pip = _pip_cmd()
+        if not pip:
+            raise ValueError("pip not found")
+        return pip + ["uninstall", "-y", name]
+    if manager == "pipx":
+        return ["pipx", "uninstall", name]
+    if manager == "cargo":
+        return ["cargo", "uninstall", name]
+    raise ValueError("can't remove packages from %s" % manager)
+
+
+def build_pkg_update_command(manager, name):
+    if manager in ("npm", "pip", "brew"):
+        return build_update_command("global", manager, [name])[0]
+    if not isinstance(name, str) or not PKG_NAME_RX.match(name):
+        raise ValueError("invalid package name")
+    if manager == "pipx":
+        return ["pipx", "upgrade", name]
+    if manager == "cargo":
+        return ["cargo", "install", name]
+    raise ValueError("can't update %s from here" % manager)
+
+
+def zsh_plugin_action(path, action):
+    """Update (git pull) or remove (Trash) a zsh plugin folder you installed."""
+    home = os.path.expanduser("~")
+    path = os.path.abspath(path or "")
+    allowed_roots = [os.path.join(home, ".oh-my-zsh", "custom"), os.path.join(home, ".local", "share", "zinit"),
+                     os.path.join(home, ".zinit"), os.path.join(home, ".zplug"), os.path.join(home, ".cache", "antidote"),
+                     os.path.join(home, ".oh-my-zsh")]
+    if not any(path == r or path.startswith(r + os.sep) for r in allowed_roots) or not os.path.isdir(path):
+        return {"ok": False, "error": "not a zsh plugin folder StackRadar manages"}
+    if action == "update":
+        if not os.path.isdir(os.path.join(path, ".git")):
+            return {"ok": False, "error": "not a git checkout, can't update"}
+        return job_start("Update zsh plugin " + os.path.basename(path), ["git", "-C", path, "pull", "--ff-only"], kind="update")
+    if action == "remove":
+        if path == os.path.join(home, ".oh-my-zsh") or "/plugins/" not in path.replace(os.sep, "/") + "/" and "zinit" not in path and "zplug" not in path and "antidote" not in path:
+            return {"ok": False, "error": "only plugin folders can be removed"}
+        r = do_delete(path)
+        if r.get("ok"):
+            r["note"] = "also remove it from plugins=(…) in ~/.zshrc"
+        return r
+    return {"ok": False, "error": "unknown action"}
+
+
+PKG_INFO = {"lock": threading.Lock(), "cache": {}}
+
+
+def _http_json(url, timeout=12):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "StackRadar/" + VERSION, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _gh_repo(url):
+    m = re.search(r"github\.com[/:]([\w.-]+)/([\w.-]+?)(?:\.git)?(?:[/#?]|$)", url or "")
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _ver_key(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in re.findall(r"\d+", str(v or ""))[:4])
+
+
+def package_info(manager, name, current=None):
+    """What a package does and what changed since your version: description, homepage, latest version + date,
+    and the release notes in between (GitHub releases when the package links a GitHub repo).
+    Fetched only when you open a package (needs internet); cached for an hour."""
+    key = (manager, name, current)
+    with PKG_INFO["lock"]:
+        c = PKG_INFO["cache"].get(key)
+        if c and time.time() - c["t"] < 3600:
+            return c["v"]
+    if not isinstance(name, str) or not PKG_NAME_RX.match(name):
+        return {"ok": False, "error": "invalid package name"}
+    out = {"ok": True, "manager": manager, "name": name, "current": current, "description": None, "homepage": None,
+           "repo": None, "license": None, "latest": None, "latest_date": None, "current_date": None,
+           "versions_behind": None, "releases": [], "changelog_url": None}
+    try:
+        if manager in ("npm", "node"):
+            d = _http_json("https://registry.npmjs.org/" + urllib.parse.quote(name, safe="@"))
+            out["description"] = d.get("description")
+            out["homepage"] = d.get("homepage")
+            repo = d.get("repository")
+            out["repo"] = repo.get("url") if isinstance(repo, dict) else repo
+            out["license"] = d.get("license") if isinstance(d.get("license"), str) else None
+            out["latest"] = (d.get("dist-tags") or {}).get("latest")
+            times = d.get("time") or {}
+            out["latest_date"] = _ts_iso(times.get(out["latest"]))
+            out["current_date"] = _ts_iso(times.get(current)) if current else None
+            if current:
+                vs = [v for v in (d.get("versions") or {}) if "-" not in v and _ver_key(current) < _ver_key(v) <= _ver_key(out["latest"])]
+                out["versions_behind"] = len(vs)
+        elif manager in ("pip", "python", "pipx"):
+            d = _http_json("https://pypi.org/pypi/%s/json" % urllib.parse.quote(name))
+            info = d.get("info") or {}
+            out["description"] = info.get("summary")
+            urls = info.get("project_urls") or {}
+            out["homepage"] = info.get("home_page") or urls.get("Homepage") or urls.get("homepage")
+            out["repo"] = next((v for k, v in urls.items() if "github.com" in (v or "")), None)
+            out["changelog_url"] = next((v for k, v in urls.items() if re.search(r"change|release|history|news", k, re.I)), None)
+            out["license"] = (info.get("license") or "")[:60] or None
+            out["latest"] = info.get("version")
+            rel = d.get("releases") or {}
+            up = (rel.get(out["latest"]) or [{}])
+            out["latest_date"] = _ts_iso((up[0] if up else {}).get("upload_time_iso_8601"))
+            if current and rel.get(current):
+                out["current_date"] = _ts_iso(rel[current][0].get("upload_time_iso_8601"))
+                out["versions_behind"] = len([v for v in rel if re.match(r"^[\d.]+$", v) and _ver_key(current) < _ver_key(v) <= _ver_key(out["latest"])])
+        elif manager == "brew":
+            for kind in ("formula", "cask"):
+                try:
+                    d = _http_json("https://formulae.brew.sh/api/%s/%s.json" % (kind, urllib.parse.quote(name)))
+                except Exception:
+                    continue
+                out["description"] = d.get("desc")
+                out["homepage"] = d.get("homepage")
+                out["latest"] = (d.get("versions") or {}).get("stable") or d.get("version")
+                src = ((d.get("urls") or {}).get("stable") or {}).get("url") or d.get("url") or ""
+                out["repo"] = d.get("homepage") if "github.com" in (d.get("homepage") or "") else (src if "github.com" in src else None)
+                out["license"] = d.get("license")
+                break
+        gh = _gh_repo(out["repo"] or "") or _gh_repo(out["homepage"] or "")
+        if gh:
+            out["repo_url"] = "https://github.com/%s/%s" % gh
+            out["changelog_url"] = out["changelog_url"] or out["repo_url"] + "/releases"
+            try:
+                rels = _http_json("https://api.github.com/repos/%s/%s/releases?per_page=30" % gh)
+                cur_k = _ver_key(current) if current else None
+                for r in rels if isinstance(rels, list) else []:
+                    if r.get("draft") or r.get("prerelease"):
+                        continue
+                    k = _ver_key(r.get("tag_name"))
+                    if cur_k and k and k <= cur_k:
+                        continue
+                    out["releases"].append({"version": r.get("tag_name"), "date": _ts_iso(r.get("published_at")),
+                                            "url": r.get("html_url"), "notes": (r.get("body") or "")[:4000]})
+                    if len(out["releases"]) >= 12:
+                        break
+            except Exception as e:
+                out["releases_error"] = "GitHub: %s" % str(e)[:120]
+    except Exception as e:
+        out = {**out, "ok": False, "error": "couldn't reach the %s registry: %s" % (manager, str(e)[:160])}
+    with PKG_INFO["lock"]:
+        PKG_INFO["cache"][key] = {"t": time.time(), "v": out}
+    return out
+
+
+TRANSFER_AGENTS = {
+    "claude": {"name": "Claude Code", "cmd": "claude", "model_flag": "--model", "prompt": "{q}", "models": ["opus", "sonnet", "haiku"]},
+    "codex": {"name": "Codex CLI", "cmd": "codex", "model_flag": "-m", "prompt": "{q}", "models": []},
+    "gemini": {"name": "Gemini CLI", "cmd": "gemini", "model_flag": "-m", "prompt": "-i {q}", "models": []},
+    "aider": {"name": "Aider", "cmd": "aider", "model_flag": "--model", "prompt": "--message-file {f}", "models": []},
+    "opencode": {"name": "OpenCode", "cmd": "opencode", "model_flag": "-m", "prompt": "run {q}", "models": []},
+}
+
+
+def transfer_options():
+    """Agents you can hand a project to, with model suggestions taken from your own usage and local Ollama models."""
+    with STATE["lock"]:
+        agents = list((STATE["data"] or {}).get("agents") or [])
+    seen_models = {}
+    for a in agents:
+        for m in ((a.get("usage") or {}).get("by_model") or {}):
+            seen_models.setdefault(a["id"], []).append(m)
+    ollama = []
+    if shutil.which("ollama"):
+        ok, out = run_cmd(["ollama", "list"], timeout=8)
+        ollama = [l.split()[0] for l in (out or "").splitlines()[1:] if l.strip()]
+    res = []
+    for aid, t in TRANSFER_AGENTS.items():
+        sug = list(dict.fromkeys(t["models"] + seen_models.get(aid, [])))
+        if aid == "aider":
+            sug += ["ollama_chat/" + m for m in ollama]
+        res.append({"id": aid, "name": t["name"], "installed": bool(shutil.which(t["cmd"])), "models": sug[:20]})
+    return {"agents": res, "ollama": ollama}
+
+
+def project_transfer(path, agent_id, model=None):
+    """Brief for another agent / model to continue a project: from its latest agent session if there is one,
+    else from what StackRadar knows about the project."""
+    p = _project_by_path(path)
+    if not p:
+        return {"ok": False, "error": "project not found in the last scan"}
+    t = TRANSFER_AGENTS.get(agent_id)
+    if not t:
+        return {"ok": False, "error": "unknown agent"}
+    if model and not re.match(r"^[\w.:/@+-]{1,80}$", model):
+        return {"ok": False, "error": "model name has unexpected characters"}
+    sessions = []
+    with STATE["lock"]:
+        for a in (STATE["data"] or {}).get("agents") or []:
+            sessions += [s for s in (a.get("session_list") or []) if s.get("cwd") and (s["cwd"] == path or s["cwd"].startswith(path + os.sep)) and not s.get("subagent")]
+    sessions.sort(key=lambda s: -(s.get("last") or 0))
+    if sessions:
+        h = session_handoff(sessions[0]["agent"], sessions[0]["file"])
+        brief, src = h["markdown"], "latest %s session (%s)" % (sessions[0]["agent"], sessions[0].get("title") or sessions[0]["id"])
+    else:
+        lines = ["# Continue the project: %s" % p["name"], "", "Folder: `%s`" % path, "",
+                 "## What it is", "", p.get("purpose") or "(no description)", "",
+                 "## State", "", "- Stage: %s" % p.get("stage", "?")]
+        lines += ["- Missing: %s" % r for r in (p.get("stage_reasons") or [])]
+        if (p.get("run") or {}).get("command"):
+            lines.append("- Run with: `%s`" % p["run"]["command"])
+        g = p.get("git") or {}
+        if g.get("vcs"):
+            lines.append("- Git: branch %s, last commit %s%s" % (g.get("branch"), g.get("last_subject") or "", ", %s uncommitted changes" % g["dirty_files"] if g.get("dirty_files") else ""))
+        lines += ["", "## Please", "", "1. Read the code and README to understand where it stands.",
+                  "2. Get it running and fix what's broken.", "3. Fill in what's missing above and tell me what you changed.", ""]
+        brief, src = "\n".join(lines), "project summary (no agent session found)"
+        out_dir = os.path.join(os.path.expanduser("~/.stackradar"), "handoffs")
+        os.makedirs(out_dir, exist_ok=True)
+    out_dir = os.path.join(os.path.expanduser("~/.stackradar"), "handoffs")
+    os.makedirs(out_dir, exist_ok=True)
+    fp = os.path.join(out_dir, "%s-to-%s.md" % (re.sub(r"[^\w.-]", "_", p["name"])[:50], agent_id))
+    with open(fp, "w", encoding="utf-8") as f:
+        f.write(brief)
+    q = ('"$(cat %s)"' % shlex_quote(fp)) if OS_NAME != "Windows" else '(Get-Content -Raw "%s")' % fp
+    args = [t["cmd"]] + ([t["model_flag"], model] if model else []) + [t["prompt"].format(q=q, f=shlex_quote(fp))]
+    cmd = "cd %s && %s" % (shlex_quote(path), " ".join(args)) if OS_NAME != "Windows" else 'cd "%s"; %s' % (path, " ".join(args))
+    return {"ok": True, "brief": brief, "file": fp, "source": src, "command": cmd, "installed": bool(shutil.which(t["cmd"]))}
+
+
+def open_in_terminal(command, cwd):
+    """Open the OS terminal running a command (you asked for it from the UI). Best effort per OS."""
+    try:
+        if OS_NAME == "Darwin":
+            script = 'tell application "Terminal" to do script %s' % json.dumps(command)
+            subprocess.Popen(["osascript", "-e", script, "-e", 'tell application "Terminal" to activate'])
+        elif OS_NAME == "Windows":
+            subprocess.Popen(["powershell", "-NoProfile", "-Command", "Start-Process powershell -ArgumentList '-NoExit','-Command',%s"
+                              % ("'" + command.replace("'", "''") + "'")], cwd=cwd)
+        else:
+            for term in (["x-terminal-emulator", "-e"], ["gnome-terminal", "--"], ["konsole", "-e"], ["xterm", "-e"]):
+                if shutil.which(term[0]):
+                    subprocess.Popen(term + ["bash", "-lc", command + "; exec bash"], cwd=cwd)
+                    break
+            else:
+                return {"ok": False, "error": "no terminal app found: copy the command instead"}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def job_start(title, argv, cwd=None, kind="update", after=None):
     if not shutil.which(argv[0]) and not os.path.isfile(argv[0]):
         return {"ok": False, "error": "%s is not installed / not in PATH" % argv[0]}
@@ -3905,12 +5834,24 @@ def job_start(title, argv, cwd=None, kind="update", after=None):
     return {"ok": True, "id": jid, "cmd": job["cmd"]}
 
 
+def _job_timing(j):
+    """pct / eta_s / elapsed_s for a job. Jobs that report progress (0..1) get a real ETA."""
+    out = {"elapsed_s": round((j.get("finished") or time.time()) - j["started"])}
+    pr = j.get("progress")
+    if isinstance(pr, (int, float)) and pr > 0:
+        out["pct"] = round(100 * min(1.0, pr), 1)
+        el = time.time() - j["started"]
+        if j.get("status") == "running" and pr < 1 and el > 1:
+            out["eta_s"] = round(el / pr - el)
+    return out
+
+
 def jobs_view(jid=None):
     with JOBS["lock"]:
         if jid:
             j = JOBS["jobs"].get(jid)
-            return dict(j) if j else None
-        return [{k: v for k, v in j.items() if k != "logs"} | {"log_tail": j["logs"][-400:]}
+            return {**j, **_job_timing(j), "result": j.get("result")} if j else None
+        return [{**{k: v for k, v in j.items() if k not in ("logs", "result")}, "log_tail": j["logs"][-400:], **_job_timing(j)}
                 for j in sorted(JOBS["jobs"].values(), key=lambda j: -j["started"])]
 
 
@@ -3967,7 +5908,7 @@ NET_RULES_FILE = os.path.join(os.path.expanduser("~/.stackradar"), "network-rule
 NET = {"lock": threading.RLock(), "events": deque(maxlen=400), "pending": {}, "temp": {},
        "rules": None, "proxy_port": None, "proxied": {}, "sock_prev": {}, "sock_t": 0,
        "rdns": {}, "fwd": {}, "alerts": deque(maxlen=200), "app_hist": {}, "started": False,
-       "conn_cache": {"t": 0, "data": None}}
+       "conn_cache": {"t": 0, "data": None}, "pid_prev": {}, "app_totals": {}, "totals_since": time.time()}
 NET_LEVELS = ("low", "medium", "strict")
 PROMPT_TIMEOUT = {"medium": 25, "strict": 45}
 
@@ -4186,9 +6127,57 @@ def rule_lookup(app, host, port=None):
     return best
 
 
-def net_level():
-    lv = settings_get().get("net_level", "medium")
+def net_level(app_path=None):
+    """The guard level for an app: its own override (set per project in the Network Guard) or the global one."""
+    st = settings_get()
+    if app_path:
+        lv = (st.get("app_net_levels") or {}).get(app_path)
+        if lv in NET_LEVELS:
+            return lv
+    lv = st.get("net_level", "medium")
     return lv if lv in NET_LEVELS else "medium"
+
+
+def set_app_level(app_path, level):
+    st = settings_get()
+    levels = dict(st.get("app_net_levels") or {})
+    if level in NET_LEVELS:
+        levels[app_path] = level
+    else:
+        levels.pop(app_path, None)
+    settings_set({"app_net_levels": levels})
+    return levels
+
+
+def proc_stop(pid, force=False):
+    """Stop one of your own processes (not StackRadar). Used by Network Guard's 'stop this app'."""
+    pid = int(pid)
+    if pid in _protected_pids():
+        return {"ok": False, "error": "that is StackRadar itself"}
+    d = _proc_details([pid]).get(pid) or {}
+    me = _me()
+    mine = (d.get("uid") == me["uid"]) if me["uid"] is not None and d.get("uid") is not None else \
+           (d.get("user", "").lower() == (me["user"] or "").lower())
+    if not d:
+        return {"ok": False, "error": "process %d is gone" % pid}
+    if not mine:
+        return {"ok": False, "error": "owned by %s: stopping it needs admin rights" % (d.get("user") or "another user"),
+                "admin_cmd": ("taskkill /PID %d /F" % pid) if OS_NAME == "Windows" else "sudo kill %d" % pid}
+    with RUNS["lock"]:
+        rid = next((k for k, r in RUNS["runs"].items() if r.get("pid") == pid and r.get("status") == "running"), None)
+    if rid:
+        run_stop(rid, hard=force)
+        return {"ok": True, "pid": pid, "method": "stopped the StackRadar run"}
+    if OS_NAME == "Windows":
+        ok, out = run_cmd(["taskkill", "/PID", str(pid)] + (["/F"] if force else []), timeout=15)
+        return {"ok": ok, "pid": pid, "method": "taskkill", "error": None if ok else (out or "")[:300]}
+    try:
+        os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        return {"ok": False, "error": "permission denied", "admin_cmd": "sudo kill %d" % pid}
+    return {"ok": True, "pid": pid, "method": "SIGKILL" if force else "SIGTERM", "cmd": d.get("cmd")}
 
 
 def _project_refs(app_path):
@@ -4212,7 +6201,7 @@ def guard_decide(app, host, port, scheme, sensitive=None):
     app_path = (app or {}).get("path")
     app_name = (app or {}).get("name") or "unknown app"
     info = host_info(host)
-    level = net_level()
+    level = net_level(app_path)
     if info["category"] == "local":
         return True, "this machine"
     r = rule_lookup(app_path or "*", host, port)
@@ -4687,6 +6676,7 @@ def net_connections():
     with STATE["lock"]:
         projects = list((STATE["data"] or {}).get("projects", []))
     projs = [((p.get("path") or "").rstrip(os.sep), p) for p in projects]
+    projs.sort(key=lambda x: -len(x[0] or ""))   # deepest (nested) project first
     cwds = _live_pid_cwds([x["pid"] for x in conns])
     with RUNS["lock"]:
         managed = {r.get("pid"): r for r in RUNS["runs"].values() if r.get("status") == "running"}
@@ -4697,6 +6687,18 @@ def net_connections():
         prev, dt = NET["sock_prev"], max(0.5, now - (NET["sock_t"] or now - 2))
         fwd = dict(NET["fwd"])
     new_prev = {}
+    # macOS: nettop gives byte counters per process, not per socket: turn them into a rate and share it
+    # out over that process's connections
+    pid_prev = NET["pid_prev"]
+    new_pid_prev, pid_rate, pid_n = {}, {}, {}
+    for c in conns:
+        if c.get("proc_bytes_in") is not None and c["pid"] not in new_pid_prev:
+            tot = (c["proc_bytes_in"], c["proc_bytes_out"])
+            new_pid_prev[c["pid"]] = tot
+            pb = pid_prev.get(c["pid"])
+            pid_rate[c["pid"]] = (max(0, (tot[0] - pb[0]) / dt), max(0, (tot[1] - pb[1]) / dt)) if pb else (0, 0)
+        if c.get("proc_bytes_in") is not None:
+            pid_n[c["pid"]] = pid_n.get(c["pid"], 0) + 1
     for c in conns:
         ip = c["remote_ip"]
         info = host_info(ip)
@@ -4739,6 +6741,11 @@ def net_connections():
             c["rate_in"] = max(0, (c["bytes_in"] - pb[0]) / dt) if pb else 0
             c["rate_out"] = max(0, (c["bytes_out"] - pb[1]) / dt) if pb else 0
             new_prev[key] = (c["bytes_in"], c["bytes_out"])
+            c["total_in"], c["total_out"] = c["bytes_in"], c["bytes_out"]      # since this connection opened
+        elif c["pid"] in pid_rate:
+            n = max(1, pid_n.get(c["pid"], 1))
+            c["rate_in"], c["rate_out"] = pid_rate[c["pid"]][0] / n, pid_rate[c["pid"]][1] / n
+            c["proc_total_in"], c["proc_total_out"] = c["proc_bytes_in"], c["proc_bytes_out"]   # whole process
         r = rule_lookup(c["project_path"] or "*", c["host"] or ip, c["remote_port"])
         c["rule"] = r["action"] if r else None
         if r and r["action"] == "deny":
@@ -4749,7 +6756,16 @@ def net_connections():
                       detail="sending %s/s to an unrecognised host" % fmt_bytes(c["rate_out"]))
     with NET["lock"]:
         NET["sock_prev"], NET["sock_t"] = new_prev, now
+        NET["pid_prev"] = new_pid_prev
         NET["conn_cache"] = {"t": now, "data": conns}
+        # running totals per app since StackRadar started (rate × time between samples)
+        for c in conns:
+            if c["category"] == "local":
+                continue
+            k = c["project"] or c["proc"] or "?"
+            t = NET["app_totals"].setdefault(k, [0.0, 0.0])
+            t[0] += (c.get("rate_in") or 0) * dt
+            t[1] += (c.get("rate_out") or 0) * dt
         # rolling per-app totals for sparklines
         agg = {}
         for c in conns:
@@ -4806,7 +6822,7 @@ def network_view():
         if c["category"] == "local" or c["pid"] == me:
             continue          # loopback-only traffic isn't "talking to the internet"
         k = c["project"] or c["proc"] or "pid %s" % c["pid"]
-        a = apps.setdefault(k, {"name": k, "project": c["project"], "managed": c["managed"], "pids": set(),
+        a = apps.setdefault(k, {"name": k, "project": c["project"], "project_path": c.get("project_path"), "managed": c["managed"], "pids": set(),
                                 "conns": 0, "rate_in": 0, "rate_out": 0, "hosts": set(), "flags": set(), "entry": c.get("entry")})
         a["pids"].add(c["pid"])
         a["conns"] += 1
@@ -4826,7 +6842,15 @@ def network_view():
                                         "rate_in": 0, "rate_out": 0, "hosts": set(), "flags": set(), "entry": None})
         a["hosts"].add(st["host"])
         a["guarded"] = True
+    with NET["lock"]:
+        totals = {k: list(v) for k, v in NET["app_totals"].items()}
+    for st in proxied:
+        t = totals.setdefault(st["app"], [0.0, 0.0])
+        t[0] = max(t[0], st.get("bytes_in") or 0)
+        t[1] = max(t[1], st.get("bytes_out") or 0)
     for a in apps.values():
+        t = totals.get(a["name"]) or [0, 0]
+        a["total_in"], a["total_out"] = round(t[0]), round(t[1])
         a["pids"] = sorted(p for p in a["pids"] if p)
         a["hosts"] = sorted(a["hosts"])[:20]
         a["flags"] = sorted(a["flags"])
@@ -4844,7 +6868,209 @@ def network_view():
             "os": OS_NAME, "connections": conns, "apps": sorted(apps.values(), key=lambda a: -(a["rate_in"] + a["rate_out"] + a["conns"])),
             "proxied": sorted(proxied, key=lambda x: -x["started"])[:80], "events": events, "alerts": alerts,
             "pending": pending_view(), "rules": net_rules(), "static_refs": static[:400],
-            "trusted": TRUSTED_HOSTS, "now": time.time()}
+            "trusted": TRUSTED_HOSTS, "now": time.time(), "app_levels": s.get("app_net_levels") or {},
+            "totals_since": NET["totals_since"], "total_in": round(sum(v[0] for v in totals.values())),
+            "total_out": round(sum(v[1] for v in totals.values())),
+            "scopes": [{"name": p["name"], "path": p["path"],
+                        "kind": "repo" if (p.get("git") or {}).get("vcs") else ("app" if (p.get("run") or {}).get("command") else "project"),
+                        "refs": len(p.get("net_refs") or [])} for p in sorted(projects, key=lambda x: x["name"].lower())]}
+
+
+# ---------------------------------------------------------------------------
+# Caches + disk space explorer
+# ---------------------------------------------------------------------------
+
+def _cache_paths(*cands):
+    out = []
+    for c in cands:
+        if not c:
+            continue
+        p = os.path.expandvars(os.path.expanduser(c))
+        if "%" in p or "$" in p:
+            continue
+        out.append(p)
+    return out
+
+
+def cache_defs():
+    L = os.path.expanduser("~/Library/Caches")
+    lad = os.environ.get("LOCALAPPDATA") or ""
+    xdg = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    j = os.path.join
+    return [
+        # id, label, group, [paths], clean argv or None, note
+        ("npm", "npm cache", "JavaScript", _cache_paths("~/.npm/_cacache", j(lad, "npm-cache") if lad else None), ["npm", "cache", "clean", "--force"], "re-downloaded on the next install"),
+        ("yarn", "Yarn cache", "JavaScript", _cache_paths(j(L, "Yarn"), j(xdg, "yarn"), j(lad, "Yarn", "Cache") if lad else None, "~/.yarn/berry/cache"), ["yarn", "cache", "clean"], ""),
+        ("pnpm", "pnpm store", "JavaScript", _cache_paths("~/Library/pnpm/store", "~/.local/share/pnpm/store", "~/.pnpm-store", j(lad, "pnpm", "store") if lad else None), ["pnpm", "store", "prune"], "prune removes packages no project uses"),
+        ("bun", "Bun cache", "JavaScript", _cache_paths("~/.bun/install/cache"), ["bun", "pm", "cache", "rm"], ""),
+        ("pip", "pip cache", "Python", _cache_paths(j(L, "pip"), j(xdg, "pip"), j(lad, "pip", "Cache") if lad else None), _pip_cmd() and (_pip_cmd() + ["cache", "purge"]), ""),
+        ("uv", "uv cache", "Python", _cache_paths(j(xdg, "uv"), j(L, "uv"), j(lad, "uv", "cache") if lad else None), ["uv", "cache", "clean"], ""),
+        ("poetry", "Poetry cache", "Python", _cache_paths(j(L, "pypoetry"), j(xdg, "pypoetry"), j(lad, "pypoetry", "Cache") if lad else None), None, ""),
+        ("huggingface", "Hugging Face models & datasets", "AI / ML", _cache_paths(j(xdg, "huggingface")), None, "downloaded models: re-downloaded when a script needs them (can be large)"),
+        ("torch", "PyTorch hub cache", "AI / ML", _cache_paths(j(xdg, "torch")), None, ""),
+        ("ollama", "Ollama models", "AI / ML", _cache_paths("~/.ollama/models"), None, "your local LLMs; use `ollama rm <model>` to remove one"),
+        ("brew", "Homebrew downloads", "System tools", _cache_paths(j(L, "Homebrew"), j(xdg, "Homebrew")), ["brew", "cleanup", "--prune=all"], "old versions and downloads"),
+        ("gomod", "Go module cache", "Go / Rust / JVM", _cache_paths("~/go/pkg/mod"), ["go", "clean", "-modcache"], ""),
+        ("gobuild", "Go build cache", "Go / Rust / JVM", _cache_paths(j(L, "go-build"), j(xdg, "go-build"), j(lad, "go-build") if lad else None), ["go", "clean", "-cache"], ""),
+        ("cargo", "Cargo registry", "Go / Rust / JVM", _cache_paths("~/.cargo/registry", "~/.cargo/git"), None, ""),
+        ("gradle", "Gradle caches", "Go / Rust / JVM", _cache_paths("~/.gradle/caches", "~/.gradle/wrapper/dists"), None, ""),
+        ("maven", "Maven repository", "Go / Rust / JVM", _cache_paths("~/.m2/repository"), None, ""),
+        ("xcode", "Xcode DerivedData", "Apple", _cache_paths("~/Library/Developer/Xcode/DerivedData"), None, "build products; Xcode rebuilds them"),
+        ("simcache", "iOS Simulator caches", "Apple", _cache_paths("~/Library/Developer/CoreSimulator/Caches"), None, ""),
+        ("xcodedev", "Old iOS device support", "Apple", _cache_paths("~/Library/Developer/Xcode/iOS DeviceSupport"), None, "symbols for iOS versions you may no longer use"),
+        ("cocoapods", "CocoaPods cache", "Apple", _cache_paths(j(L, "CocoaPods")), ["pod", "cache", "clean", "--all"], ""),
+        ("playwright", "Playwright browsers", "Testing", _cache_paths(j(L, "ms-playwright"), j(xdg, "ms-playwright"), j(lad, "ms-playwright") if lad else None), None, "re-installed with npx playwright install"),
+        ("puppeteer", "Puppeteer browsers", "Testing", _cache_paths(j(xdg, "puppeteer")), None, ""),
+        ("cypress", "Cypress binaries", "Testing", _cache_paths(j(L, "Cypress"), j(xdg, "Cypress")), None, ""),
+        ("electron", "Electron downloads", "Testing", _cache_paths(j(L, "electron"), j(xdg, "electron"), j(L, "electron-builder"), j(xdg, "electron-builder")), None, ""),
+        ("vscode", "VS Code caches", "Editors & browsers", _cache_paths("~/Library/Application Support/Code/Cache", "~/Library/Application Support/Code/CachedData",
+                                                                         "~/.config/Code/Cache", "~/.config/Code/CachedData", j(os.environ.get("APPDATA", ""), "Code", "Cache") if os.environ.get("APPDATA") else None), None, ""),
+        ("chrome", "Chrome cache", "Editors & browsers", _cache_paths(j(L, "Google", "Chrome"), j(xdg, "google-chrome"), j(lad, "Google", "Chrome", "User Data", "Default", "Cache") if lad else None), None, "close Chrome first"),
+        ("firefox", "Firefox cache", "Editors & browsers", _cache_paths(j(L, "Firefox"), j(xdg, "mozilla")), None, "close Firefox first"),
+        ("trash", "Trash", "Other", _cache_paths("~/.Trash", "~/.local/share/Trash/files"), None, "emptying the Trash is permanent"),
+        ("othercache", "All other app caches", "Other", _cache_paths(L if OS_NAME == "Darwin" else xdg, j(lad, "Temp") if lad else None), None, "drill down to see which app"),
+    ]
+
+
+CACHES = {"lock": threading.Lock(), "data": None}
+
+
+def caches_job():
+    def work(log, job):
+        defs = cache_defs()
+        rows, total = [], len(defs)
+        seen = set()
+        for i, (cid, label, group, paths, clean, note) in enumerate(defs):
+            job["progress"] = i / max(1, total)
+            found = []
+            for pth in paths:
+                rp = os.path.realpath(pth)
+                if not os.path.isdir(pth) or rp in seen:
+                    continue
+                seen.add(rp)
+                if cid == "othercache":
+                    size, n = fast_dir_size(pth)
+                    # minus the caches already listed above
+                    for r in rows:
+                        for f in r["paths"]:
+                            if f["path"].startswith(pth + os.sep):
+                                size -= f["size"]
+                    found.append({"path": pth, "size": max(0, size), "files": n})
+                else:
+                    size, n = fast_dir_size(pth)
+                    found.append({"path": pth, "size": size, "files": n})
+            if found:
+                tool_ok = bool(clean) and bool(shutil.which(clean[0]) or os.path.isfile(clean[0]))
+                rows.append({"id": cid, "label": label, "group": group, "paths": found, "size": sum(f["size"] for f in found),
+                             "clean_cmd": " ".join(clean) if tool_ok else None, "note": note})
+                log("%-32s %10s" % (label, fmt_bytes(rows[-1]["size"])))
+        docker = None
+        if shutil.which("docker"):
+            ok, out = run_cmd(["docker", "system", "df", "--format", "{{json .}}"], timeout=20)
+            if ok:
+                kinds = []
+                for line in out.splitlines():
+                    try:
+                        kinds.append(json.loads(line))
+                    except Exception:
+                        pass
+                docker = kinds
+        res = {"checked_at": time.time(), "caches": sorted(rows, key=lambda r: -r["size"]), "docker": docker,
+               "total": sum(r["size"] for r in rows if r["id"] not in ("trash",))}
+        with CACHES["lock"]:
+            CACHES["data"] = res
+        job["progress"] = 1.0
+        return {"total": res["total"]}
+    return _thread_job("Measuring caches", work, kind="caches")
+
+
+def cache_clean(cid):
+    d = next((x for x in cache_defs() if x[0] == cid), None)
+    if not d or not d[4]:
+        return {"ok": False, "error": "no clean command for this cache: delete its folders instead"}
+
+    def _after(rc):
+        with CACHES["lock"]:
+            CACHES["data"] = None
+    return job_start("Clean " + d[1], d[4], kind="clean", after=_after)
+
+
+def _cache_roots():
+    roots = []
+    for d in cache_defs():
+        roots += d[3]
+    return [os.path.realpath(r) for r in roots]
+
+
+def is_cache_path(path):
+    rp = os.path.realpath(path)
+    return any(rp == r or rp.startswith(r + os.sep) for r in _cache_roots())
+
+
+PROTECTED_HOME_DIRS = {"Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music", "Videos", "Library", "Applications",
+                       "AppData", "Public", "OneDrive", "Dropbox", "iCloud Drive", ".ssh", ".gnupg", ".config", ".local",
+                       ".stackradar", "go", ".cargo", ".rustup"}
+
+
+def protected_path(path):
+    """Folders StackRadar never deletes: your home folder and its standard top-level folders."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    rp = os.path.realpath(path)
+    if rp == home or rp == os.path.dirname(home) or rp in ("/", "C:\\"):
+        return True
+    if os.path.dirname(rp) == home and os.path.basename(rp) in PROTECTED_HOME_DIRS:
+        return True
+    return False
+
+
+def disk_list(path, limit=400):
+    """Children of a folder with their sizes, biggest first. Uses the scan's folder sizes when it has them."""
+    home = os.path.expanduser("~")
+    path = os.path.abspath(os.path.expanduser(path or "~"))
+    if not (path == home or path.startswith(home + os.sep)) and not is_cache_path(path):
+        return {"ok": False, "error": "only folders inside your home folder"}
+    if not os.path.isdir(path):
+        return {"ok": False, "error": "not a folder"}
+    with STATE["lock"]:
+        sub = STATE.get("subtree") or {}
+        projects = {p["path"]: p["name"] for p in (STATE["data"] or {}).get("projects", [])}
+    try:
+        entries = list(os.scandir(path))
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    entries = entries[:3000]
+
+    def measure(e):
+        try:
+            if e.is_symlink():
+                return {"name": e.name, "path": e.path, "type": "link", "size": 0}
+            if e.is_dir(follow_symlinks=False):
+                if e.path in sub and e.name not in CONTENT_SKIP_DIRS:
+                    size, src = sub[e.path], "scan"
+                else:
+                    size, src = fast_dir_size(e.path)[0], "live"
+                return {"name": e.name, "path": e.path, "type": "dir", "size": size, "src": src,
+                        "mtime": e.stat(follow_symlinks=False).st_mtime}
+            st = e.stat(follow_symlinks=False)
+            return {"name": e.name, "path": e.path, "type": "file", "size": st.st_size, "mtime": st.st_mtime}
+        except Exception:
+            return None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        rows = [r for r in ex.map(measure, entries) if r]
+    for r in rows:
+        r["project"] = projects.get(r["path"])
+        r["protected"] = protected_path(r["path"])
+        r["cache"] = r["name"] in CONTENT_SKIP_DIRS or is_cache_path(r["path"])
+    rows.sort(key=lambda r: -r["size"])
+    parent = os.path.dirname(path) if path != home else None
+    crumbs, cur = [], path
+    while True:
+        crumbs.insert(0, {"name": os.path.basename(cur) or cur, "path": cur})
+        if cur == home or os.path.dirname(cur) == cur:
+            break
+        cur = os.path.dirname(cur)
+    return {"ok": True, "path": path, "parent": parent, "crumbs": crumbs, "total": sum(r["size"] for r in rows),
+            "count": len(rows), "items": rows[:limit], "more": max(0, len(rows) - limit), "is_cache": is_cache_path(path)}
 
 
 # ---------------------------------------------------------------------------
@@ -4882,6 +7108,33 @@ def _thread_job(title, fn, kind="archive"):
         job["finished"] = time.time()
     threading.Thread(target=runner, daemon=True).start()
     return {"ok": True, "id": jid, "cmd": title}
+
+
+def duplicates_job(folders):
+    """Re-check duplicates for every project plus extra folders (e.g. ~/Pictures) as a background job."""
+    def work(log, job):
+        with STATE["lock"]:
+            projects = list((STATE["data"] or {}).get("projects") or [])
+        pr = {}
+
+        def tick():
+            while job["status"] == "running":
+                if pr.get("dup_total"):
+                    job["progress"] = 0.1 + 0.9 * pr.get("dup_done", 0) / max(1, pr["dup_total"])
+                time.sleep(0.5)
+        threading.Thread(target=tick, daemon=True).start()
+        log("checking %d projects + %s" % (len(projects), ", ".join(folders) or "no extra folders"))
+        job["progress"] = 0.05
+        res = duplicates_scan(projects, progress=pr, extra_folders=folders)
+        with STATE["lock"]:
+            if STATE["data"]:
+                STATE["data"]["duplicates"] = res
+        job["progress"] = 1.0
+        log("done: %d exact duplicate groups, %d renamed copies, %d look-alikes" % (
+            res["group_count"], res["renamed_count"], res["lookalike_count"]))
+        return {"groups": res["group_count"]}
+    return _thread_job("Find duplicates" + (" in " + ", ".join(os.path.basename(f) for f in folders) if folders else ""),
+                       work, kind="duplicates")
 
 
 def archive_project(path, trash_original=True, exclude_regen=True):
@@ -5098,9 +7351,28 @@ class Handler(BaseHTTPRequestHandler):
             data = dict(data)
             data["runs"] = runs_view()
             data["port_panel"] = port_panel_data()
-            return self._send(200, {"scan": SCAN, **data})
+            return self._send(200, {"scan": scan_progress_view(), **data})
+        elif p == "/api/tools":
+            force = (q.get("refresh") or ["0"])[0] == "1"
+            return self._send(200, tools_inventory(force))
+        elif p == "/api/caches":
+            with CACHES["lock"]:
+                return self._send(200, CACHES["data"] or {"empty": True})
+        elif p == "/api/disk":
+            return self._send(200, disk_list((q.get("path") or ["~"])[0]))
+        elif p == "/api/pkg/info":
+            g = lambda k: (q.get(k) or [""])[0]
+            return self._send(200, package_info(g("manager"), g("name"), g("current") or None))
+        elif p == "/api/agents/latest":
+            return self._send(200, agent_latest((q.get("id") or [""])[0]))
+        elif p == "/api/agents/archived":
+            return self._send(200, {"sessions": archived_sessions()})
+        elif p == "/api/transfer/options":
+            return self._send(200, transfer_options())
+        elif p == "/api/ports":
+            return self._send(200, ports_view())
         elif p == "/api/scan/progress":
-            return self._send(200, SCAN)
+            return self._send(200, scan_progress_view())
         elif p == "/api/runs":
             rid = (q.get("id") or [""])[0]
             with RUNS["lock"]:
@@ -5309,6 +7581,134 @@ class Handler(BaseHTTPRequestHandler):
                 rule_add("*", host, "deny", note="OS firewall block")
             return self._send(200, job_start(title, argv, None, kind="firewall"))
 
+        if p == "/api/network/app-level":
+            app = body.get("app")
+            if not isinstance(app, str) or not app:
+                return self._send(400, {"error": "app (project path) required"})
+            return self._send(200, {"ok": True, "app_levels": set_app_level(app, body.get("level"))})
+        if p == "/api/network/stop":
+            try:
+                return self._send(200, proc_stop(body.get("pid"), bool(body.get("force"))))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "pid required"})
+        if p == "/api/network/clear-log":
+            with NET["lock"]:
+                NET["events"].clear()
+                NET["alerts"].clear()
+            return self._send(200, {"ok": True})
+        if p == "/api/tools/action":
+            mgr, name, act = body.get("manager"), body.get("name"), body.get("action")
+            if not body.get("confirm"):
+                return self._send(400, {"error": "confirm required"})
+            if mgr == "zsh":
+                r = zsh_plugin_action(body.get("path"), act)
+                INV["data"] = None
+                return self._send(200, r)
+            try:
+                argv = build_remove_command(mgr, name) if act == "remove" else build_pkg_update_command(mgr, name) if act == "update" else None
+            except ValueError as e:
+                return self._send(400, {"error": str(e)})
+            if not argv:
+                return self._send(400, {"error": "action must be update or remove"})
+
+            def _after(rc):
+                INV["data"] = None
+                GLOBAL_OUTDATED["data"] = None
+            return self._send(200, job_start(("Remove " if act == "remove" else "Update ") + name, argv, kind=act, after=_after))
+        if p == "/api/tools/latest":
+            def work(log, job):
+                log("asking npm, pip and Homebrew for newer versions…")
+                job["progress"] = 0.1
+                global_outdated(force=True)
+                job["progress"] = 0.8
+                tools_inventory(force=True)
+                return {"ok": True}
+            return self._send(200, _thread_job("Check for newer versions", work, kind="check"))
+        if p == "/api/caches/scan":
+            return self._send(200, caches_job())
+        if p == "/api/caches/clean":
+            return self._send(200, cache_clean(body.get("id")))
+        if p == "/api/disk/delete":
+            path = os.path.abspath(os.path.expanduser(body.get("path") or ""))
+            home = os.path.expanduser("~")
+            if not (path.startswith(home + os.sep) or is_cache_path(path)):
+                return self._send(403, {"error": "only inside your home folder"})
+            if protected_path(path):
+                return self._send(403, {"error": "protected folder"})
+            name = os.path.basename(path.rstrip(os.sep))
+            permanent = bool(body.get("permanent"))
+            if body.get("confirm") != name:
+                return self._send(400, {"error": "confirmation required"})
+            res = do_delete(path, force=permanent)
+            if res.get("ok"):
+                with CACHES["lock"]:
+                    CACHES["data"] = None
+                _forget_project(path)
+            return self._send(200, res)
+        if p == "/api/agents/session":
+            r = session_action(body.get("agent"), body.get("file"), body.get("action"), body.get("tags"), body.get("note"))
+            return self._send(200, r)
+        if p == "/api/agents/stop":
+            try:
+                return self._send(200, proc_stop(body.get("pid"), bool(body.get("force"))))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "pid required"})
+        if p == "/api/transfer":
+            return self._send(200, project_transfer(os.path.abspath(os.path.expanduser(body.get("path") or "")), body.get("agent"), body.get("model") or None))
+        if p == "/api/terminal":
+            path = os.path.abspath(os.path.expanduser(body.get("cwd") or "~"))
+            home = os.path.expanduser("~")
+            if not (path == home or path.startswith(home + os.sep)):
+                return self._send(403, {"error": "outside home"})
+            cmd = body.get("command") or ""
+            if not body.get("confirm") or not isinstance(cmd, str) or len(cmd) > 4000:
+                return self._send(400, {"error": "confirm required"})
+            # only the agent commands StackRadar builds (cd <folder> && <agent> …)
+            if not re.match(r"^cd [^\n;|&`]+?\s*(&&|;)\s*(claude|codex|gemini|aider|opencode)( |$)[^\n;|&`]*$", cmd):
+                return self._send(400, {"error": "StackRadar only opens terminals for agent hand-off commands"})
+            if "$" in re.sub(r'"\$\(cat [^)"$`\n]+\)"', "", cmd):
+                return self._send(400, {"error": "unexpected shell expansion in the command"})
+            return self._send(200, open_in_terminal(cmd, path))
+        if p == "/api/skills/action":
+            if not body.get("confirm"):
+                return self._send(400, {"error": "confirm required"})
+            try:
+                return self._send(200, skill_action(body.get("action"), body.get("path"), body.get("agent"), body.get("keep")))
+            except Exception as e:
+                return self._send(200, {"ok": False, "error": str(e)})
+        if p == "/api/schedules/action":
+            if not body.get("confirm") or not isinstance(body.get("schedule"), dict):
+                return self._send(400, {"error": "confirm + schedule required"})
+            try:
+                r = schedule_action(body["schedule"], body.get("action"), body.get("expr"))
+            except Exception as e:
+                r = {"ok": False, "error": str(e)}
+            if r.get("ok"):
+                try:
+                    with STATE["lock"]:
+                        projs = list((STATE["data"] or {}).get("projects") or [])
+                    ss = system_schedules(projs)
+                    with STATE["lock"]:
+                        if STATE["data"]:
+                            STATE["data"]["system_schedules"] = ss
+                except Exception:
+                    pass
+            return self._send(200, r)
+        if p == "/api/ports/stop":
+            try:
+                return self._send(200, port_stop(body.get("pid"), body.get("port"), bool(body.get("force"))))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "pid and port are required"})
+        if p == "/api/duplicates/rescan":
+            home = os.path.expanduser("~")
+            folders = []
+            for f in (body.get("folders") or [])[:10]:
+                f = os.path.abspath(os.path.expanduser(str(f)))
+                if not (f == home or f.startswith(home + os.sep)) or not os.path.isdir(f):
+                    return self._send(400, {"error": "folders must be inside your home folder: %s" % f})
+                folders.append(f)
+            settings_set({"dup_folders": folders})
+            return self._send(200, duplicates_job(folders))
         if p == "/api/archive":
             path = os.path.abspath(os.path.expanduser(body.get("path") or ""))
             home = os.path.expanduser("~")

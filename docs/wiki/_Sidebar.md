@@ -7,6 +7,10 @@
 
 **Features**
 - [Network Guard](Network-Guard.md)
+- [Ports](Ports.md)
+- [Tools & packages](Tools-and-Packages.md)
+- [Caches & disk space](Caches-and-Disk-Space.md)
+- [Themes](Themes.md)
 - [Lineage graph](Lineage-Graph.md)
 - [AI agents & skills](AI-Agents-and-Skills.md)
 - [Schedules](Schedules.md)

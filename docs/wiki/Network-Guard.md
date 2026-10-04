@@ -19,6 +19,25 @@ that live and lets you **allow or deny** each destination.
 
 A 🛡 badge in the top bar shows the current level and pulses when an app is waiting for an answer, on any tab.
 
+**Sent / received totals**: next to the live speed (KB/s, MB/s), every app and connection shows how much it has sent and
+received in total (since StackRadar started; per connection on Linux, per app on macOS).
+
+## One project at a time
+
+![Network Guard for one project](../../media/screenshots/33-network-scope.jpg)
+
+Pick a project, app or repo in **Show** (top right). Every panel filters to it, and a panel lets you:
+
+- give it **its own security level** (Low / Medium / Strict, or *use global*),
+- add allow / deny rules just for it, or **deny everything else**,
+- **▶ Run guarded** (start it behind the guard) or **■ Stop** its processes.
+
+## Details and actions
+
+Click any app or connection for a detail window: the destination, live and total traffic, the file and line behind
+it, its rule, and buttons to **always allow / deny** (for this app or for every app), **block at the OS firewall**,
+**show only this host** and **stop the app**. Rules can be flipped (⇄) or deleted (✕); the guard log can be cleared.
+
 ## How "which file is connecting" works
 
 1. The process behind each connection is mapped to its **project** (working directory) and the **script it runs** (`node server.js`, `python worker.py` …).

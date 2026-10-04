@@ -35,14 +35,16 @@ project it finds:
 | What is this repo and how do I run it? | Purpose (README / manifest), language, framework, the exact run command and why |
 | Did I leave API keys lying around? | Every secret, **masked**, with file and line. Plus `.env` files git would commit |
 | Which app is sending my data, and where? | **Network Guard**: live connections per app with bytes ↑ / ↓, the **file and line** behind each one, sensitive-data alerts, and **allow / deny** prompts with **Low / Medium / Strict** levels |
-| What's running and on which port? | Live ports with their process, the ports each app *should* use, one-click start / stop |
+| What's running and on which port? | A live **Ports** tab: every listening port, its program, project and who can reach it, with **Stop / Force kill**. ▶ Run any project from the list |
 | How does it all connect? | An interactive **lineage graph**: projects ↔ runtimes ↔ dependencies ↔ ports ↔ secrets ↔ AI tools ↔ skills ↔ schedules |
 | Is my machine struggling? | Live **CPU, per-core, load average, memory, swap, disk, network** and the heaviest processes |
-| Which AI agents do I have? | **Claude Code, Codex CLI, Hermes Agent, OpenClaw, Paperclip, Gemini CLI, Cursor, Windsurf, Copilot CLI, OpenCode, Goose, Aider, Qwen Code, Amp, Kiro, Continue, Cline/Roo, Ollama, LM Studio**: version, sessions, MCP servers, tokens, running |
-| Which skills do I actually use? | Every `SKILL.md`, slash command and sub-agent, real usage counts, never-used and **duplicate skills** |
-| What runs on a timer? | GitHub Actions / Vercel / node-cron / Celery crons, your crontab, launchd, systemd timers, Task Scheduler and **agent cron jobs**, with next-run countdowns |
-| Where is my disk space going? | Space hogs, reclaimable caches, **hash-verified duplicate files**, copied projects, and **archive = compress** (verified `.tar.gz`/`.zip`, restore any time) |
-| What's outdated? | Global npm / pip / Homebrew packages and per-project dependencies, **updated from the app** |
+| Which AI agents do I have? | **Claude Code, Codex CLI, Hermes Agent, OpenClaw, Paperclip, Gemini CLI, Cursor, Windsurf, Copilot CLI, OpenCode, Goose, Aider, Qwen Code, Amp, Kiro, Continue, Cline/Roo, Ollama, LM Studio**: version vs newest, every session (hand off / tag / archive / delete), tokens **by model and by CLI / IDE / app**, MCP servers, processes (stop old ones) |
+| This project stalled. Can another agent finish it? | **Continue with another agent**: a brief from the last session and the command for Claude Code, Codex, Gemini CLI, Aider or OpenCode with the model you pick |
+| Which skills do I actually use? | Every `SKILL.md`, slash command and sub-agent, real usage counts, never-used skills, **duplicates with every location**, delete / share / "keep one, link the rest" |
+| What runs on a timer? | GitHub Actions / Vercel / node-cron / Celery crons, your crontab, launchd, systemd timers, Task Scheduler and **agent cron jobs**, with next-run countdowns, and **pause / re-time / delete** |
+| Where is my disk space going? | **Disk space** drill-down, **caches** with one-click clean, **strict duplicates** (same name + size + content, kept apart from renamed copies and look-alikes), copied projects, **archive = compress** |
+| What's installed and what's outdated? | **Tools & packages**: CLI tools, pip, npm, Homebrew, pipx, cargo, zsh plugins with version, newest version, last used, unused; update / remove; **what's new** in each release |
+| Can I make it mine? | Light / dark / auto **themes**, presets, edit every color, import / export; categories and tags for projects; every table sorts |
 
 Every panel has an ⓘ hint, and one switch turns them all off. Features you don't use can be hidden in Settings.
 
@@ -53,7 +55,10 @@ Every panel has an ⓘ hint, and one switch turns them all off. Features you don
 | ![Network Guard signal radar with apps, hosts and data flowing in and out](media/screenshots/17-network.jpg) **Network Guard**: who talks to the internet | ![Allow or deny prompt showing the app, host and source line](media/screenshots/18-network-prompt.jpg) **Allow / deny** every new destination |
 | ![Lineage graph with glowing project nodes and animated links](media/screenshots/03-lineage.jpg) **Lineage**: force, radial and flow layouts | ![Live system monitor with CPU ring, sparklines and top processes](media/screenshots/04-system.jpg) **System**: live CPU, memory, load and disk |
 | ![AI agents grid: Claude Code, Codex, Hermes, OpenClaw, Paperclip](media/screenshots/05-agents.jpg) **Agents**: every AI coding agent on the machine | ![Skills table with usage bars and duplicate badges](media/screenshots/06-skills.jpg) **Skills**: used, unused, duplicated |
-| ![Schedules timeline and next-run table](media/screenshots/07-schedules.jpg) **Schedules**: what runs at 2 a.m. | ![Duplicate files grouped by hash](media/screenshots/08-duplicates.jpg) **Duplicates**: keep one, trash the rest |
+| ![Schedules timeline and next-run table with pause, edit and delete buttons](media/screenshots/07-schedules.jpg) **Schedules**: what runs at 2 a.m., pause or re-time it | ![Same-name files with different content, with image dimensions](media/screenshots/29-duplicates-lookalike.jpg) **Duplicates**: exact copies vs look-alikes |
+| ![Ports tab listing every listening port with stop buttons](media/screenshots/22-ports.jpg) **Ports**: what's listening, stop it | ![Tools and packages with versions, last used and update buttons](media/screenshots/23-tools.jpg) **Tools & packages**: outdated, unused, what's new |
+| ![Agent detail with sessions, models, tokens and actions](media/screenshots/27-agent-detail.jpg) **Agent sessions**: hand off, tag, archive | ![Hand-off brief with commands for Claude Code, Codex and Gemini](media/screenshots/28-handoff.jpg) **Continue with another agent** |
+| ![Caches with sizes and one-click clean](media/screenshots/25-caches.jpg) **Caches**: one-click clean | ![StackRadar in the light theme](media/screenshots/31-theme-light.jpg) **Themes**: light, dark, yours |
 
 🎬 **[Watch the 56-second promo](media/video/stackradar-promo.mp4)** (silent, 1280×720)
 
@@ -61,7 +66,7 @@ Every panel has an ⓘ hint, and one switch turns them all off. Features you don
 
 ### Desktop app (recommended)
 
-Download the latest release for your OS from **[GitHub Releases](https://github.com/SYasJ/StackRadar/releases/latest)** (current version: **2.1.0**):
+Download the latest release for your OS from **[GitHub Releases](https://github.com/SYasJ/StackRadar/releases/latest)** (current version: **2.2.0**):
 
 | OS | File | Notes |
 |---|---|---|

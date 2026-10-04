@@ -22,10 +22,11 @@ const CAT = {
   lan: { c: "#4a8f6a", label: "local network", icon: "⌂" }, local: { c: "#4a8f6a", label: "this machine", icon: "⌂" },
 };
 const OUT_C = "#39c5e0", IN_C = "#2dd4a7", BLOCK_C = "#d03b3b", WAIT_C = "#fab219";
-const NETS = { data: null, poll: null, pend: null, focusHost: "", R: { nodes: new Map(), t0: performance.now(), raf: null, hover: null } };
+const NETS = { data: null, poll: null, pend: null, focusHost: "", scope: "", R: { nodes: new Map(), t0: performance.now(), raf: null, hover: null } };
 
 function catOf(c) { return CAT[c] || CAT.unknown; }
-function rateTxt(b) { return b == null ? "—" : (b < 1 ? "0 B/s" : fmtBytes(b) + "/s"); }
+function rateTxt(b) { return b == null ? "—" : (b < 1 ? "0 KB/s" : fmtBytes(b) + "/s"); }
+function totTxt(b) { return b == null ? "—" : fmtBytes(Math.round(b)); }
 
 /* ---------------- polling: tab data + global prompts ---------------- */
 
@@ -108,7 +109,11 @@ function renderNetwork() {
       </div>${hint("net_level")}
       <label class="switch" title="route apps started from StackRadar through the guard"><input type="checkbox" id="netGuardRuns"><span class="slider"></span><span class="switch-label">Guard StackRadar runs</span></label>
       <span class="muted small" id="netLevelTxt"></span>
+      <span class="spacer"></span>
+      <label class="small" for="netScope">Show</label>
+      <select class="sel-inline" id="netScope" aria-label="project, app or repo"></select>
     </div>
+    <div id="netScopePanel"></div>
     <div class="grid cards" id="netCards" style="margin:12px 0 14px"></div>
     <div class="grid net-main">
       <div class="panel net-radar-panel"><h3>Signal radar ${hint("net_radar")} <span class="spacer"></span>
@@ -120,7 +125,7 @@ function renderNetwork() {
     <div class="panel"><h3>Live connections ${hint("net_conns")} <span class="spacer"></span><input class="search-in" id="netQ" placeholder="filter host / app…"></h3><div id="netConns"></div></div>
     <div class="grid" style="grid-template-columns: 1fr 1fr">
       <div class="panel"><h3>Guarded traffic ${hint("net_guarded")}</h3><div id="netGuarded"></div></div>
-      <div class="panel"><h3>Guard log ${hint("net_events")}</h3><div id="netEvents" class="net-events"></div></div>
+      <div class="panel"><h3>Guard log ${hint("net_events")} <span class="spacer"></span><button class="btn small" id="netClearLog">Clear</button></h3><div id="netEvents" class="net-events"></div></div>
     </div>
     <div class="panel"><h3>Code map — what your code talks to ${hint("net_code")}</h3><div id="netCode"></div></div>
     <div class="panel"><h3>Rules ${hint("net_rules")} <span class="spacer"></span>
@@ -133,6 +138,8 @@ function renderNetwork() {
     });
     $("#netGuardRuns").onchange = async e => { await api("/api/network/level", { guard_runs: e.target.checked }); netPoll(); };
     $("#netQ").oninput = e => { NETS.focusHost = e.target.value.toLowerCase(); renderNetworkBody(); };
+    $("#netScope").onchange = e => { NETS.scope = e.target.value; renderNetworkBody(); };
+    $("#netClearLog").onclick = async () => { await api("/api/network/clear-log", {}); netPoll(); };
     $("#ruleAdd").onclick = async () => {
       const j = await api("/api/network/rules", { host: $("#ruleHost").value, action: $("#ruleAct").value, app: "*" });
       if (j.ok) { toast("rule added", "ok"); $("#ruleHost").value = ""; netPoll(); } else toast(esc(j.error), "err");
@@ -151,7 +158,22 @@ function renderNetworkBody() {
   $("#netGuardRuns").checked = !!d.guard_runs;
   $("#netLevelTxt").textContent = { low: "logging only — nothing is blocked", medium: "new destinations ask you · allowed after 25 s",
     strict: "only allowed destinations · everything else denied after 45 s" }[d.level] + (d.proxy_port ? ` · guard proxy 127.0.0.1:${d.proxy_port}` : "");
-  const C = d.connections || [];
+  // scope: one project / app / repo, or everything
+  const sc = NETS.scope, scopeObj = (d.scopes || []).find(x => x.path === sc);
+  const sel = $("#netScope");
+  if (sel && sel.dataset.n !== String((d.scopes || []).length)) {
+    const groups = { repo: "Repos", app: "Apps", project: "Projects" };
+    sel.innerHTML = `<option value="">All apps & projects</option>` + Object.entries(groups).map(([k, label]) => {
+      const xs = (d.scopes || []).filter(x => x.kind === k);
+      return xs.length ? `<optgroup label="${label}">${xs.map(x => `<option value="${esc(x.path)}">${esc(x.name)}${x.refs ? " · " + x.refs + " hosts in code" : ""}</option>`).join("")}</optgroup>` : "";
+    }).join("");
+    sel.dataset.n = String((d.scopes || []).length);
+  }
+  if (sel) sel.value = sc;
+  const inScope = c => !sc || c.project_path === sc;
+  renderScopePanel(d, scopeObj);
+  const C = (d.connections || []).filter(inScope);
+  const appsIn = (d.apps || []).filter(a => !sc || a.project_path === sc);
   const ext = C.filter(c => !["local"].includes(c.category));
   const rin = C.reduce((a, c) => a + (c.rate_in || 0), 0), rout = C.reduce((a, c) => a + (c.rate_out || 0), 0);
   const since = Date.now() / 1000 - 86400;
@@ -160,21 +182,22 @@ function renderNetworkBody() {
   const risky = (d.static_refs || []).filter(r => r.risk === "high").length;
   $("#netCards").innerHTML = `
     <div class="card"><div class="k">Apps online</div><div class="v" style="color:var(--cyan)">${(d.apps || []).length}</div><div class="s">${ext.length} external connections</div></div>
-    <div class="card"><div class="k">Sending ↑</div><div class="v" style="color:${OUT_C}">${rateTxt(rout)}</div><div class="s">all apps, right now</div></div>
-    <div class="card"><div class="k">Receiving ↓</div><div class="v" style="color:${IN_C}">${rateTxt(rin)}</div><div class="s">${d.os === "Linux" || d.os === "Darwin" ? "all apps, right now" : "per-app bytes need Linux/macOS"}</div></div>
+    <div class="card"><div class="k">Sent ↑</div><div class="v" style="color:${OUT_C}">${totTxt(sc ? appsIn.reduce((a, x) => a + (x.total_out || 0), 0) : d.total_out)}</div><div class="s">${rateTxt(rout)} now · since ${new Date(d.totals_since * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div></div>
+    <div class="card"><div class="k">Received ↓</div><div class="v" style="color:${IN_C}">${totTxt(sc ? appsIn.reduce((a, x) => a + (x.total_in || 0), 0) : d.total_in)}</div><div class="s">${d.os === "Linux" || d.os === "Darwin" ? rateTxt(rin) + " now" : "per-app bytes: guarded runs only on Windows"}</div></div>
     <div class="card"><div class="k">Blocked (24 h)</div><div class="v" style="color:${blocked ? BLOCK_C : "var(--green)"}">${blocked}</div><div class="s">by rules or your answers</div></div>
     <div class="card"><div class="k">Sensitive data</div><div class="v" style="color:${sens ? BLOCK_C : "var(--green)"}">${sens}</div><div class="s">secrets / PII seen in traffic</div></div>
     <div class="card"><div class="k">Risky code paths</div><div class="v" style="color:${risky ? WAIT_C : "var(--green)"}">${risky}</div><div class="s">credentials over HTTP, unknown hosts</div></div>`;
   // apps
-  const maxR = Math.max(1, ...(d.apps || []).map(a => a.rate_in + a.rate_out));
-  $("#netApps").innerHTML = (d.apps || []).slice(0, 14).map(a => `
-    <div class="net-app">
+  const maxR = Math.max(1, ...appsIn.map(a => a.rate_in + a.rate_out));
+  $("#netApps").innerHTML = appsIn.slice(0, 14).map((a, ai) => `
+    <div class="net-app clickable" data-app="${ai}" title="click for details and actions">
       <div class="net-app-top"><b>${esc(a.name)}</b> ${a.project ? badge("📦 project", "b-purple") : ""} ${a.guarded || a.managed ? badge("🛡 guarded", "b-cyan") : ""}
-        <span class="spacer"></span><span class="mono small" style="color:${OUT_C}">↑ ${rateTxt(a.rate_out)}</span> <span class="mono small" style="color:${IN_C}">↓ ${rateTxt(a.rate_in)}</span></div>
+        <span class="spacer"></span><span class="mono small" style="color:${OUT_C}" title="sent: ${totTxt(a.total_out)} total">↑ ${rateTxt(a.rate_out)} · ${totTxt(a.total_out)}</span> <span class="mono small" style="color:${IN_C}" title="received: ${totTxt(a.total_in)} total">↓ ${rateTxt(a.rate_in)} · ${totTxt(a.total_in)}</span></div>
       <div class="net-bars"><div style="width:${100 * a.rate_out / maxR}%;background:${OUT_C}"></div><div style="width:${100 * a.rate_in / maxR}%;background:${IN_C}"></div></div>
       <div class="small muted">${a.conns} conn · ${esc((a.hosts || []).slice(0, 3).join(", "))}${(a.hosts || []).length > 3 ? " …" : ""}${a.entry ? ` · runs <span class="mono">${esc(a.entry)}</span>` : ""}</div>
       ${(a.flags || []).length ? `<div>${a.flags.map(f => badge("⚠ " + f, f === "deny rule" ? "b-red" : "b-amber")).join(" ")}</div>` : ""}
-    </div>`).join("") || `<div class="muted small">no app is talking to the network right now</div>`;
+    </div>`).join("") || `<div class="muted small">${sc ? "this project isn't talking to the network right now" : "no app is talking to the network right now"}</div>`;
+  $$("#netApps [data-app]").forEach(el => el.onclick = () => appDetail(appsIn[+el.dataset.app]));
   // connections table
   const q = NETS.focusHost;
   const grouped = new Map();
@@ -185,7 +208,7 @@ function renderNetworkBody() {
     else grouped.set(k, Object.assign({ n: 1 }, c));
   });
   const rows = [...grouped.values()].filter(c => !q || ((c.host || "") + c.remote_ip + (c.project || "") + (c.proc || "") + (c.service || "")).toLowerCase().includes(q));
-  $("#netConns").innerHTML = rows.length ? `<table><tr><th>app</th><th>destination</th><th>kind</th><th style="text-align:right">↑ out</th><th style="text-align:right">↓ in</th><th>from (code)</th><th>flags</th><th></th></tr>
+  $("#netConns").innerHTML = rows.length ? `<table><tr><th>app</th><th>destination</th><th>kind</th><th style="text-align:right">↑ out (now · total)</th><th style="text-align:right">↓ in (now · total)</th><th>from (code)</th><th>flags</th><th></th></tr>
     ${rows.slice(0, 120).map((c, i) => {
       const cat = catOf(c.category);
       const flags = [];
@@ -194,30 +217,32 @@ function renderNetworkBody() {
       if (c.remote_port === 80) flags.push(badge("plain HTTP", "b-red"));
       if (c.rule === "deny") flags.push(badge("⛔ deny rule", "b-red"));
       if (c.rule === "allow") flags.push(badge("✓ allowed", "b-green"));
-      return `<tr>
+      return `<tr class="clickable" data-crow="${i}" title="click for details">
         <td><b>${esc(c.project || c.proc || "?")}</b><div class="sub mono">pid ${c.pid || "?"}${c.managed ? " · 🛡" : ""}</div></td>
         <td><span class="mono">${esc(c.host || c.remote_ip)}</span>:${c.remote_port}${c.n > 1 ? ` <span class="badge b-gray">×${c.n}</span>` : ""}${c.host ? `<div class="sub mono">${esc(c.remote_ip)}</div>` : ""}</td>
         <td><span class="badge" style="color:${cat.c};border-color:${cat.c}">${cat.icon} ${esc(c.service || cat.label)}</span></td>
-        <td class="mono" style="text-align:right;color:${OUT_C}">${rateTxt(c.rate_out)}</td>
-        <td class="mono" style="text-align:right;color:${IN_C}">${rateTxt(c.rate_in)}</td>
+        <td class="mono" style="text-align:right;color:${OUT_C}" data-v="${c.total_out != null ? c.total_out : (c.rate_out || 0)}">${rateTxt(c.rate_out)}<div class="sub">${c.total_out != null ? totTxt(c.total_out) + " total" : c.proc_total_out != null ? totTxt(c.proc_total_out) + " (whole app)" : ""}</div></td>
+        <td class="mono" style="text-align:right;color:${IN_C}" data-v="${c.total_in != null ? c.total_in : (c.rate_in || 0)}">${rateTxt(c.rate_in)}<div class="sub">${c.total_in != null ? totTxt(c.total_in) + " total" : c.proc_total_in != null ? totTxt(c.proc_total_in) + " (whole app)" : ""}</div></td>
         <td class="small">${c.ref ? `<span class="mono">${esc(c.ref.file || "")}${c.ref.line ? ":" + c.ref.line : ""}</span><div class="sub mono">${esc((c.ref.snippet || "").slice(0, 60))}</div>` : (c.entry ? `<span class="mono">${esc(c.entry)}</span>` : '<span class="muted">—</span>')}</td>
         <td>${flags.join(" ")}</td>
         <td style="white-space:nowrap"><button class="mini-btn" data-ca="allow" data-i="${i}" title="always allow">✓</button><button class="mini-btn" data-ca="deny" data-i="${i}" title="always deny">⛔</button><button class="mini-btn" data-ca="os" data-i="${i}" title="block at the OS firewall">🧱</button></td></tr>`;
     }).join("")}</table>` : `<div class="muted small">no external connections${q ? " match" : ""} right now</div>`;
-  $$("#netConns [data-ca]").forEach(b => b.onclick = () => connAction(rows[+b.dataset.i], b.dataset.ca));
+  $$("#netConns [data-ca]").forEach(b => b.onclick = e => { e.stopPropagation(); connAction(rows[+b.dataset.i], b.dataset.ca); });
+  $$("#netConns [data-crow]").forEach(tr => tr.onclick = () => connDetail(rows[+tr.dataset.crow]));
   // guarded traffic
-  $("#netGuarded").innerHTML = (d.proxied || []).length ? `<table><tr><th>app</th><th>host</th><th style="text-align:right">↑</th><th style="text-align:right">↓</th><th></th></tr>
-    ${d.proxied.slice(0, 30).map(p => `<tr><td>${esc(p.app)}</td><td class="mono small">${esc(p.host)}:${p.port}${(p.sensitive || []).length ? " " + badge("⚠ " + p.sensitive.join(", "), "b-red") : ""}</td>
+  const proxied = (d.proxied || []).filter(p => !scopeObj || p.app === scopeObj.name);
+  $("#netGuarded").innerHTML = proxied.length ? `<table><tr><th>app</th><th>host</th><th style="text-align:right">↑</th><th style="text-align:right">↓</th><th></th></tr>
+    ${proxied.slice(0, 30).map(p => `<tr><td>${esc(p.app)}</td><td class="mono small">${esc(p.host)}:${p.port}${(p.sensitive || []).length ? " " + badge("⚠ " + p.sensitive.join(", "), "b-red") : ""}</td>
       <td class="mono small" style="text-align:right;color:${OUT_C}">${fmtBytes(p.bytes_out)}</td><td class="mono small" style="text-align:right;color:${IN_C}">${fmtBytes(p.bytes_in)}</td>
       <td>${p.open ? '<span class="dot open"></span>' : '<span class="dot closed"></span>'}</td></tr>`).join("")}</table>`
     : `<div class="muted small">Nothing yet. Start a project from the <b>Runs</b> tab and its HTTP(S) traffic goes through the guard.</div>`;
   // events
   const icon = { allowed: "✓", blocked: "⛔", prompt: "❓", sensitive: "⚠", violation: "‼", exfil: "📤", error: "✗" };
-  $("#netEvents").innerHTML = (d.events || []).slice(0, 60).map(e => `<div class="ne ne-${e.kind}"><span class="ne-i">${icon[e.kind] || "·"}</span>
+  $("#netEvents").innerHTML = (d.events || []).filter(e => !scopeObj || e.app === scopeObj.name).slice(0, 60).map(e => `<div class="ne ne-${e.kind}"><span class="ne-i">${icon[e.kind] || "·"}</span>
     <span class="muted small mono">${new Date(e.t * 1000).toLocaleTimeString()}</span> <b>${esc(e.app || "")}</b> → <span class="mono">${esc(e.host || "")}${e.port ? ":" + e.port : ""}</span>
     <span class="muted small">${esc(e.reason || e.detail || e.kind)}</span></div>`).join("") || `<div class="muted small">quiet so far</div>`;
   // code map
-  const refs = d.static_refs || [];
+  const refs = (d.static_refs || []).filter(r => !sc || r.project_path === sc);
   $("#netCode").innerHTML = refs.length ? `<table><tr><th>project</th><th>host</th><th>kind</th><th>file</th><th>notes</th></tr>
     ${refs.slice(0, 80).map(r => { const cat = catOf(r.category); return `<tr>
       <td>${esc(r.project)}</td><td class="mono small">${esc(r.scheme)}://${esc(r.host)}</td>
@@ -226,13 +251,142 @@ function renderNetworkBody() {
       <td>${r.risk !== "low" ? `<span class="sev-tag sev-${r.risk === "high" ? "high" : "medium"}">${r.risk}</span>` : ""} <span class="small">${esc((r.notes || []).join(" · "))}</span></td></tr>`; }).join("")}</table>`
     : `<div class="muted small">no outbound URLs or network SDKs found in scanned projects</div>`;
   // rules
-  $("#netRules").innerHTML = (d.rules || []).length ? (d.rules || []).map(r => `<div class="key-row">
+  const rulesIn = (d.rules || []).filter(r => !sc || r.app === sc || r.app === "*");
+  $("#netRules").innerHTML = rulesIn.length ? rulesIn.map(r => `<div class="key-row">
       <span class="badge ${r.action === "allow" ? "b-green" : "b-red"}">${r.action === "allow" ? "✓ allow" : "⛔ deny"}</span>
       <span class="mono">${esc(r.host)}</span><span class="muted small">${r.app === "*" ? "all apps" : esc(r.app.split(/[\\/]/).pop())} · ${r.hits || 0} hits${r.note ? " · " + esc(r.note) : ""}</span>
-      <button class="mini-btn" style="margin-left:auto" data-rdel="${esc(r.id)}">✕</button></div>`).join("")
+      <button class="mini-btn" style="margin-left:auto" data-rflip="${esc(r.id)}" title="switch to ${r.action === "allow" ? "deny" : "allow"}">⇄</button>
+      <button class="mini-btn" data-rdel="${esc(r.id)}" title="delete this rule">✕</button></div>`).join("")
     : `<div class="muted small">no rules yet — answer a prompt with “Always …” or add one above</div>`;
-  $$("#netRules [data-rdel]").forEach(b => b.onclick = async () => { await api("/api/network/rules", { op: "delete", id: b.dataset.rdel }); netPoll(); });
-  radarData(d);
+  $$("#netRules [data-rdel]").forEach(b => b.onclick = async () => { await api("/api/network/rules", { op: "delete", id: b.dataset.rdel }); toast("rule deleted", "ok"); netPoll(); });
+  $$("#netRules [data-rflip]").forEach(b => b.onclick = async () => {
+    const r = (d.rules || []).find(x => x.id === b.dataset.rflip); if (!r) return;
+    await api("/api/network/rules", { app: r.app, host: r.host, action: r.action === "allow" ? "deny" : "allow" }); netPoll();
+  });
+  radarData(sc ? Object.assign({}, d, { connections: C, apps: appsIn, proxied, pending: (d.pending || []).filter(p => p.app_path === sc) }) : d);
+}
+
+/* ---------------- scope panel: one project's own guard settings ---------------- */
+
+function renderScopePanel(d, sc) {
+  const el = $("#netScopePanel");
+  if (!el) return;
+  if (!sc) { el.innerHTML = ""; return; }
+  const own = (d.app_levels || {})[sc.path];
+  const app = (d.apps || []).find(a => a.project_path === sc.path);
+  const proj = (S.data.projects || []).find(p => p.path === sc.path);
+  const run = (S.data.runs || []).find(r => r.path === sc.path && r.status === "running");
+  el.innerHTML = `<div class="panel scope-panel">
+    <h3>${sc.kind === "repo" ? "⎇" : sc.kind === "app" ? "▶" : "📦"} ${esc(sc.name)} <span class="badge b-gray">${esc(sc.kind)}</span>
+      <span class="muted small mono">${esc(sc.path)}</span><span class="spacer"></span>
+      <button class="btn small" id="scOpen">Open project</button></h3>
+    <div class="scope-grid">
+      <div><div class="small muted">Security level for this ${esc(sc.kind)}</div>
+        <div class="seg" id="scLevel" role="group" aria-label="security level for ${esc(sc.name)}">
+          <button data-l="" class="${!own ? "active" : ""}">Use global (${esc(d.level)})</button>
+          <button data-l="low" class="${own === "low" ? "active" : ""}">◌ Low</button>
+          <button data-l="medium" class="${own === "medium" ? "active" : ""}">◐ Medium</button>
+          <button data-l="strict" class="${own === "strict" ? "active" : ""}">● Strict</button></div>
+        <div class="small muted" style="margin-top:4px">Applies when it runs through the guard (start it from StackRadar).</div></div>
+      <div><div class="small muted">Right now</div>
+        <div>${app ? `<b>${app.conns}</b> connection${app.conns === 1 ? "" : "s"} · <span style="color:${OUT_C}">↑ ${rateTxt(app.rate_out)} (${totTxt(app.total_out)} sent)</span> · <span style="color:${IN_C}">↓ ${rateTxt(app.rate_in)} (${totTxt(app.total_in)} received)</span> · pid ${app.pids.join(", ")}` : '<span class="muted">not connected to anything</span>'}</div>
+        <div class="pill-row" style="margin-top:6px">
+          ${run ? `<button class="btn small" id="scStopRun">■ Stop run</button>` : `<button class="btn ok small" id="scRun" ${proj && (proj.run || {}).command ? "" : "disabled title='no run command found'"}>▶ Run guarded</button>`}
+          ${app && app.pids.length ? `<button class="btn danger small" id="scKill">■ Stop process${app.pids.length > 1 ? "es" : ""}</button>` : ""}</div></div>
+      <div><div class="small muted">Rule for this ${esc(sc.kind)}</div>
+        <div class="pill-row"><input class="search-in" id="scHost" placeholder="host or *.domain" style="width:170px">
+          <button class="btn ok small" data-scr="allow">✓ allow</button><button class="btn danger small" data-scr="deny">⛔ deny</button>
+          <button class="btn danger small" data-scr="deny-all" title="deny every host for this project except what you allow">⛔ deny everything else</button></div></div>
+    </div></div>`;
+  $("#scOpen").onclick = () => { if (proj) openDrawer(proj); };
+  $$("#scLevel button").forEach(b => b.onclick = async () => {
+    await api("/api/network/app-level", { app: sc.path, level: b.dataset.l || null });
+    toast(`${esc(sc.name)}: ${b.dataset.l ? "<b>" + b.dataset.l + "</b>" : "uses the global level"}`, "ok"); netPoll();
+  });
+  $$("[data-scr]", el).forEach(b => b.onclick = async () => {
+    const host = b.dataset.scr === "deny-all" ? "*" : $("#scHost").value;
+    const j = await api("/api/network/rules", { app: sc.path, host, action: b.dataset.scr === "allow" ? "allow" : "deny" });
+    if (j.ok) { toast("rule added for " + esc(sc.name), "ok"); netPoll(); } else toast(esc(j.error), "err");
+  });
+  const kill = $("#scKill");
+  if (kill) kill.onclick = async () => {
+    if (!confirm(`Stop ${sc.name} (pid ${app.pids.join(", ")})?`)) return;
+    for (const pid of app.pids) {
+      const j = await api("/api/network/stop", { pid });
+      toast(j.ok ? `stopped pid ${pid}` : esc(j.error) + (j.admin_cmd ? `<br><code>${esc(j.admin_cmd)}</code>` : ""), j.ok ? "ok" : "err");
+    }
+    netPoll();
+  };
+  const runB = $("#scRun");
+  if (runB) runB.onclick = async () => {
+    const j = await api("/api/run", { path: sc.path });
+    toast(j.ok ? "started behind the guard" : esc(j.error || "could not start"), j.ok ? "ok" : "err");
+    await loadState(); netPoll();
+  };
+  const stopR = $("#scStopRun");
+  if (stopR) stopR.onclick = async () => { await api("/api/runs/stop", { id: run.id }); await loadState(); netPoll(); };
+}
+
+/* ---------------- detail windows ---------------- */
+
+function appDetail(a) {
+  if (!a) return;
+  if (a.project_path && NETS.scope !== a.project_path) { NETS.scope = a.project_path; renderNetworkBody(); return; }
+  const conns = (NETS.data.connections || []).filter(c => (c.project || c.proc || "pid " + c.pid) === a.name && c.category !== "local");
+  modal(`<h3>${esc(a.name)} ${a.guarded || a.managed ? badge("🛡 guarded", "b-cyan") : badge("monitored only", "b-gray")}</h3>
+    <div class="small">pid ${a.pids.join(", ")}${a.entry ? " · runs <span class='mono'>" + esc(a.entry) + "</span>" : ""} · ${a.conns} connection(s) · ↑ ${rateTxt(a.rate_out)} · ↓ ${rateTxt(a.rate_in)}</div>
+    <table style="margin-top:8px"><tr><th>destination</th><th>kind</th><th>↑</th><th>↓</th></tr>
+      ${conns.map(c => `<tr><td class="mono small">${esc(c.host || c.remote_ip)}:${c.remote_port}</td><td class="small">${esc(c.service || catOf(c.category).label)}</td><td class="mono small">${rateTxt(c.rate_out)}</td><td class="mono small">${rateTxt(c.rate_in)}</td></tr>`).join("")}</table>
+    ${!a.project_path ? `<div class="small muted" style="margin-top:8px">Not inside a scanned project, so per-project rules don't apply. You can still stop it or block hosts for every app.</div>` : ""}
+    <div class="m-actions"><button class="btn" id="mCancel">Close</button>
+      ${a.pids.length ? `<button class="btn danger" id="mStop">■ Stop</button><button class="btn danger" id="mKill">✕ Force kill</button>` : ""}</div>`);
+  $("#mCancel").onclick = closeModal;
+  const stop = async force => {
+    for (const pid of a.pids) {
+      const j = await api("/api/network/stop", { pid, force });
+      toast(j.ok ? `pid ${pid}: ${esc(j.method)}` : esc(j.error) + (j.admin_cmd ? `<br><code>${esc(j.admin_cmd)}</code>` : ""), j.ok ? "ok" : "err");
+    }
+    closeModal(); netPoll();
+  };
+  if ($("#mStop")) { $("#mStop").onclick = () => stop(false); $("#mKill").onclick = () => { if (confirm("Force kill? Unsaved work in that program is lost.")) stop(true); }; }
+}
+
+function connDetail(c) {
+  if (!c) return;
+  const cat = catOf(c.category), host = c.host || c.remote_ip;
+  modal(`<h3><span class="badge" style="color:${cat.c};border-color:${cat.c}">${cat.icon} ${esc(c.service || cat.label)}</span> ${esc(host)}:${c.remote_port}</h3>
+    <div class="kv">
+      <div class="k">app</div><div><b>${esc(c.project || c.proc || "?")}</b> · pid ${c.pid || "?"} ${c.managed ? badge("🛡 guarded", "b-cyan") : badge("monitored only", "b-gray")}</div>
+      <div class="k">address</div><div class="mono">${esc(c.remote_ip)}:${c.remote_port}${c.host ? " (" + esc(c.host) + ")" : ""}</div>
+      <div class="k">traffic now</div><div><span style="color:${OUT_C}">↑ ${rateTxt(c.rate_out)}</span> · <span style="color:${IN_C}">↓ ${rateTxt(c.rate_in)}</span>${c.n > 1 ? ` · ${c.n} sockets` : ""}</div>
+      <div class="k">total</div><div>${c.total_out != null ? `↑ ${totTxt(c.total_out)} sent · ↓ ${totTxt(c.total_in)} received on this connection` : c.proc_total_out != null ? `whole app: ↑ ${totTxt(c.proc_total_out)} · ↓ ${totTxt(c.proc_total_in)}` : '<span class="muted">not available on this OS</span>'}</div>
+      <div class="k">from (code)</div><div>${c.ref ? `<span class="mono">${esc(c.ref.file || "")}${c.ref.line ? ":" + c.ref.line : ""}</span><div class="sub mono">${esc(c.ref.snippet || "")}</div>${c.ref.carries_secret ? badge("🔑 credentials near this call", "b-amber") : ""}` : (c.entry ? `runs <span class="mono">${esc(c.entry)}</span> (no file references this host)` : '<span class="muted">unknown</span>')}</div>
+      <div class="k">rule</div><div>${c.rule ? badge(c.rule === "allow" ? "✓ allowed" : "⛔ denied", c.rule === "allow" ? "b-green" : "b-red") : '<span class="muted">none</span>'}</div>
+    </div>
+    ${!c.managed ? `<div class="warn-box small" style="margin-top:8px">This app wasn't started by StackRadar, so a deny rule is recorded and alerts you, but can't cut the connection. To stop it now: <b>Stop app</b> below, <b>block at the OS firewall</b>, or restart it from Runs.</div>` : ""}
+    <div class="pill-row" style="margin-top:10px">
+      ${c.project_path ? `<button class="btn ok small" data-cd="allow">✓ Always allow for ${esc(c.project)}</button><button class="btn danger small" data-cd="deny">⛔ Always deny for ${esc(c.project)}</button>` : ""}
+      <button class="btn ok small" data-cd="allow-all">✓ Allow for all apps</button><button class="btn danger small" data-cd="deny-all">⛔ Deny for all apps</button>
+      <button class="btn small" data-cd="os">🧱 Block at OS firewall</button>
+      <button class="btn small" data-cd="filter">🔎 Show only ${esc(host)}</button>
+      ${c.pid ? `<button class="btn danger small" data-cd="stop">■ Stop app</button>` : ""}
+    </div>
+    <div class="m-actions"><button class="btn" id="mCancel">Close</button></div>`);
+  $("#mCancel").onclick = closeModal;
+  $$("[data-cd]").forEach(b => b.onclick = async () => {
+    const a = b.dataset.cd;
+    if (a === "os") { closeModal(); return osBlockModal(host, c.remote_ip); }
+    if (a === "filter") { closeModal(); $("#netQ").value = host; NETS.focusHost = host.toLowerCase(); return renderNetworkBody(); }
+    if (a === "stop") {
+      if (!confirm(`Stop ${c.project || c.proc || "pid " + c.pid}?`)) return;
+      const j = await api("/api/network/stop", { pid: c.pid });
+      toast(j.ok ? "stopped" : esc(j.error) + (j.admin_cmd ? `<br><code>${esc(j.admin_cmd)}</code>` : ""), j.ok ? "ok" : "err");
+      closeModal(); return netPoll();
+    }
+    const j = await api("/api/network/rules", { app: a.endsWith("-all") ? "*" : c.project_path, host, action: a.startsWith("allow") ? "allow" : "deny" });
+    toast(j.ok ? "rule saved" : esc(j.error), j.ok ? "ok" : "err");
+    closeModal(); netPoll();
+  });
 }
 
 async function connAction(c, act) {

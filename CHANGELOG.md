@@ -4,7 +4,33 @@ All notable changes to StackRadar. Versions follow [Semantic Versioning](https:/
 The single source of truth is the `VERSION` file (bump it with `scripts/bump_version.py`).
 <!-- next -->
 
-## [Unreleased]
+## [2.2.0] — 2026-10-04
+
+The "control centre" release: everything StackRadar shows, you can now act on.
+
+### Fixed
+- **Only one project showed up** when your home folder (or the folder you scanned) looked like a project itself, e.g. a `~/.claude` folder plus one script. Your home folder is never a project now, and StackRadar keeps looking inside projects for more projects.
+- **Plain git repos without a package file were missed**: the `.git` folder was filtered out before the check ran.
+- **No ports on macOS**: the `lsof` reader waited for a line type that `lsof` never prints. On Linux without `ss`, the `/proc` fallback read the wrong column and merged ports.
+- **No network speeds on macOS**: per-app byte counters from `nettop` were read but never turned into rates.
+- The scan bar said "walking file tree" and jumped around. It now says what it's doing in plain words.
+
+### Added
+- **Scan progress with percent and time left**, plus a "still working · 12s" pill on anything that takes a moment, and percent / time left in every job window.
+- **Projects**: nested projects (monorepo packages, repos inside repos) with their parent; a **stage** (ready / in progress / incomplete) with what's missing; unfinished folders (README + code, loose scripts, notebooks, static sites) are listed; your own **categories and tags**; a **▶ Run / ■ Stop** button on every row; **click any tag** (language, dependency, AI tool, stage, category) to see every project that has it.
+- **Continue with another agent**: hand a stalled project (or any agent session) to Claude Code, Codex, Gemini CLI, Aider or OpenCode, with the model you choose. StackRadar writes a brief from the last session (goal, later instructions, where it stopped, open to-dos, files touched) and gives you the command, or opens it in a terminal.
+- **Duplicates** are now strict: *exact* means same name, size and content (SHA-256). Same content under another name and same name with different content (with image dimensions) are listed separately, clearly marked "not duplicates". Check extra folders like `~/Pictures`.
+- **Sortable tables everywhere**: click any column header, again to reverse.
+- **Ports** tab: every listening port, live, with program, command, project, who can reach it (this computer / your network), owner and start time; **Stop** or **Force kill** your own programs, with the exact admin command for the rest.
+- **Network Guard**: choose one project / app / repo and give it its **own security level** and rules; click any app or connection for details and actions (always allow / deny for this app or everyone, OS firewall block, stop the app); **total KB / MB sent and received** next to the live speed; flip or delete rules; clear the log.
+- **Tools & packages** tab: CLI tools, Python packages, npm globals, Homebrew formulae and casks, pipx, cargo and zsh plugins with the installed version, the newest version, when you last used it (from your shell history), what uses it, what nothing uses and how old it is; **update or remove** each one; click a package for **what it does and what's new** (release notes since your version).
+- **Caches** tab: npm, Yarn, pnpm, pip, uv, Homebrew, Go, Cargo, Gradle, Xcode, simulators, Playwright, browsers, Hugging Face and more, with one-click clean using the tool's own command, and Docker disk use.
+- **Disk space** tab: every folder with its size, drill in, delete to the Trash or permanently. Your home folder and its standard folders can never be deleted.
+- **Agents**: click an agent for its sessions (title, project, where it ran, model, tokens, size) with view, hand off, tag ("to delete"), archive / restore and delete, single or in bulk; tokens split **by model and by where it ran (CLI, IDE, desktop app, web)**; installed vs newest version with one-click update; its processes with CPU / memory and **"stop all but the newest"**; its skills and MCP servers.
+- **Skills**: delete a skill, share it with another agent (linked, so there's one copy), and for duplicates see every location with its version and **"keep this, link the rest"** into the shared `~/.agents/skills` folder. "Identical" now compares every file in the skill folder.
+- **Schedules**: pause, resume, change the timing and delete crontab lines, launchd agents, systemd user timers, Windows scheduled tasks and OpenClaw / Hermes jobs, and re-time cron lines in repo files. Every change keeps a backup in `~/.stackradar/backups`.
+- **Lineage**: double-click a project to drill in: its folders sized, nested projects, the hosts its code talks to, the agents that worked on it; categories become nodes in the overview.
+- **Themes**: light, dark or auto (follows your OS), six presets (Midnight, Dracula, Nord, High contrast, Daylight, Solarized light, Paper), edit every color, save your own presets, import and export theme files.
 
 ### Changed
 - **License**: StackRadar is now free for personal, non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use needs a paid license ([COMMERCIAL.md](COMMERCIAL.md)). Help → About shows the license, and the installers ship `LICENSE.txt`.
