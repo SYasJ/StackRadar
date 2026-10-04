@@ -145,6 +145,10 @@ jobs:
       - name: Build installers
         run: |
           if [[ "${{ needs.check.outputs.release }}" == "true" ]]; then PUB=always; else PUB=never; fi
+          # secrets that aren't set arrive as empty strings; electron-builder would read CSC_LINK="" as a file path
+          for v in CSC_LINK CSC_KEY_PASSWORD WIN_CSC_LINK WIN_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!v}" ]]; then unset "$v"; fi
+          done
           EXTRA=""
           # no Apple certificate → ad-hoc sign so Apple-silicon Macs will launch it (Gatekeeper still asks once)
           if [[ "${{ runner.os }}" == "macOS" && -z "$CSC_LINK" ]]; then EXTRA="-c.mac.identity=-"; fi
