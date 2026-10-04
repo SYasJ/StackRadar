@@ -1,0 +1,30 @@
+name: StackRadar Wiki
+
+# Publishes docs/wiki/*.md to the repository's GitHub Wiki whenever they change.
+on:
+  push:
+    branches: [main]
+    paths: ["docs/wiki/**", "scripts/publish_wiki.py", ".github/workflows/stackradar-wiki.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone the wiki
+        run: git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" _wiki
+      - name: Build pages
+        run: python3 scripts/publish_wiki.py _wiki
+      - name: Push
+        working-directory: _wiki
+        run: |
+          git config user.name "Yasir Jilani"
+          git config user.email "27597591+SYasJ@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "wiki already up to date"; exit 0; fi
+          git commit -m "Update wiki from docs/wiki (${GITHUB_SHA::7})"
+          git push
