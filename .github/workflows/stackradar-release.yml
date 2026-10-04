@@ -1,10 +1,14 @@
 name: StackRadar Release (dmg / exe / AppImage)
 
-# Push a tag like v2.0.0 (see scripts/bump_version.py) to build installers for
-# macOS, Windows and Linux and publish them to a GitHub Release. The desktop app's
-# auto-updater (electron-updater) reads that release.
+# Builds installers for macOS, Windows and Linux and publishes them to a GitHub Release, which the
+# desktop app's auto-updater (electron-updater) reads. A release starts when either
+#   - a commit on main changes VERSION (scripts/bump_version.py) and v<VERSION> isn't released yet, or
+#   - a tag v<VERSION> is pushed.
+# The release (and its tag, if missing) is created by this workflow.
 on:
   push:
+    branches: [main]
+    paths: [VERSION, .github/workflows/stackradar-release.yml]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -16,8 +20,38 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: stackradar-release
+  cancel-in-progress: false
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.v.outputs.release }}
+      version: ${{ steps.v.outputs.version }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Is there a version to release?
+        run: |
+          V="$(cat VERSION)"; echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/v* && "${GITHUB_REF_NAME}" != "v$V" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match VERSION ($V). Run scripts/bump_version.py first."; exit 1
+          fi
+          DRAFT="$(gh release view "v$V" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo none)"
+          if [[ "$DRAFT" == "false" ]]; then
+            echo "v$V is already released."; echo "release=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" || "${{ inputs.publish }}" == "true" ]]; then
+            echo "Releasing v$V."; echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,32 +62,27 @@ jobs:
   # Create the draft release first so the three builds upload into one release (no race), with
   # the generated notes: changelog + download table + install steps for unsigned macOS / Windows builds.
   draft:
-    needs: test
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    needs: [check, test]
+    if: needs.check.outputs.release == 'true'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      V: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Tag matches VERSION
-        run: |
-          V="$(cat VERSION)"
-          if [[ "${GITHUB_REF}" == refs/tags/v* && "${GITHUB_REF_NAME}" != "v$V" ]]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match VERSION ($V). Run scripts/bump_version.py first."; exit 1
-          fi
-          echo "TAG=v$V" >> "$GITHUB_ENV"; echo "V=$V" >> "$GITHUB_ENV"
       - run: python3 scripts/release_notes.py
       - name: Draft release
         run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "StackRadar $V" --notes-file desktop/build/release-notes.md
+          if gh release view "v$V" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "v$V" --repo "$GITHUB_REPOSITORY" --title "StackRadar $V" --target "$GITHUB_SHA" --notes-file desktop/build/release-notes.md
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "StackRadar $V" --notes-file desktop/build/release-notes.md
+            gh release create "v$V" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" --title "StackRadar $V" --notes-file desktop/build/release-notes.md
           fi
 
   build:
-    needs: [test, draft]
-    if: ${{ !cancelled() && needs.test.result == 'success' && needs.draft.result != 'failure' }}
+    needs: [check, test, draft]
+    # release builds, or a manual run (artifacts only)
+    if: ${{ !cancelled() && needs.test.result == 'success' && (needs.draft.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.draft.result == 'skipped')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -115,7 +144,7 @@ jobs:
 
       - name: Build installers
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* || "${{ inputs.publish }}" == "true" ]]; then PUB=always; else PUB=never; fi
+          if [[ "${{ needs.check.outputs.release }}" == "true" ]]; then PUB=always; else PUB=never; fi
           EXTRA=""
           # no Apple certificate → ad-hoc sign so Apple-silicon Macs will launch it (Gatekeeper still asks once)
           if [[ "${{ runner.os }}" == "macOS" && -z "$CSC_LINK" ]]; then EXTRA="-c.mac.identity=-"; fi
@@ -136,8 +165,8 @@ jobs:
   # All three builds succeeded → add checksums and publish the draft (it becomes "Latest", and
   # installed apps see the update).
   publish:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    needs: [check, build]
+    if: needs.check.outputs.release == 'true'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

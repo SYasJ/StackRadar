@@ -6,16 +6,17 @@ UI shows it, and the desktop build copies it into `desktop/package.json`.
 ## Cut a release
 
 ```bash
-cd stackradar
 python3 scripts/bump_version.py minor        # or patch | major | 2.3.0
 #  → updates VERSION, desktop/package.json, adds a CHANGELOG.md stub
 $EDITOR CHANGELOG.md                         # describe the release
-git commit -am "StackRadar 2.1.0"
-git tag v2.1.0
-git push --follow-tags
+git commit -am "StackRadar 2.2.0"
+git push                                     # a VERSION change on main starts the release
 ```
 
-Pushing a `v*` tag runs **`.github/workflows/stackradar-release.yml`**:
+A push to `main` that changes `VERSION` releases that version if it isn't released yet. The workflow creates the
+`vX.Y.Z` tag itself when it publishes. Pushing a tag `vX.Y.Z` by hand works too.
+
+The release runs **`.github/workflows/stackradar-release.yml`**:
 
 1. **test**: unit + HTTP tests.
 2. **draft**: checks the tag matches `VERSION`, writes the release notes with `scripts/release_notes.py`
@@ -28,8 +29,9 @@ Pushing a `v*` tag runs **`.github/workflows/stackradar-release.yml`**:
 4. **publish**, only if all three builds passed: adds `SHA256SUMS.txt` and publishes the draft as **Latest**. From
    that moment installed apps see the update (`latest.yml`, `latest-mac.yml`, `latest-linux.yml`).
 
-If a build fails, nothing is published: fix it, delete the draft and the tag, and push the tag again
-(`git tag -d v2.1.0 && git push origin :v2.1.0`, then tag and push).
+If a build fails, nothing is published and the release stays a draft. For a flaky failure, open the run and click
+**Re-run failed jobs**. For a real fix, push it to `main` together with a change to `VERSION` or the release workflow;
+the next run reuses the draft.
 
 Preview the notes locally with `python3 scripts/release_notes.py -o /tmp/notes.md`.
 

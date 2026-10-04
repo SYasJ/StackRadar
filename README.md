@@ -127,7 +127,7 @@ StackRadar/
 
 StackRadar is built and maintained by [@SYasJ](https://github.com/SYasJ). Bug reports and ideas are welcome as
 [issues](https://github.com/SYasJ/StackRadar/issues). Tests: `python3 -m unittest discover -s tests`. Releases are cut with
-`python3 scripts/bump_version.py minor` → `git tag vX.Y.Z` → push. GitHub Actions then builds and publishes the installers.
+`python3 scripts/bump_version.py minor` → edit `CHANGELOG.md` → commit → push to `main`. GitHub Actions then builds and publishes the installers.
 See [Releasing & versioning](docs/wiki/Releasing-and-Versioning.md).
 
 <sub>Keywords: developer dashboard, application firewall, outbound connection monitor, per-app network monitor, little snitch alternative, data exfiltration detection, local dev environment manager, project finder, port monitor, API key scanner, secrets
