@@ -123,7 +123,7 @@ function buildMenu() {
     { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" },
     { label: "Help", submenu: [
       { label: "About StackRadar " + app.getVersion(), click: () => dialog.showMessageBox(win, { type: "info", title: "About StackRadar",
-          message: "StackRadar " + app.getVersion(), detail: "Your whole dev stack on one local screen.\n© 2026 Yasir Jilani\nhttps://github.com/SYasJ/StackRadar" }) },
+          message: "StackRadar " + app.getVersion(), detail: "Your whole dev stack on one local screen.\n© 2026 Yasir Jilani\n\nFree for personal, non-commercial use (PolyForm Noncommercial 1.0.0).\nCommercial use needs a license: github.com/SYasJ/StackRadar/blob/main/COMMERCIAL.md\n\nhttps://github.com/SYasJ/StackRadar" }) },
       { label: "Check for Updates…", click: checkForUpdates },
       { label: "StackRadar Wiki", click: () => shell.openExternal("https://github.com/SYasJ/StackRadar/wiki") },
       { label: "Report an Issue", click: () => shell.openExternal("https://github.com/SYasJ/StackRadar/issues") }] },

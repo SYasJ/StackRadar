@@ -26,8 +26,8 @@ def main(out):
         with open(os.path.join(out, os.path.basename(fp)), "w", encoding="utf-8") as f:
             f.write(s)
     with open(os.path.join(out, "_Footer.md"), "w", encoding="utf-8") as f:
-        f.write("StackRadar · free, open, 100%% local · [Download](https://github.com/%s/releases) · "
-                "[Source](https://github.com/%s) · [Report an issue](https://github.com/%s/issues)\n" % (REPO, REPO, REPO))
+        f.write("StackRadar · 100%% local · free for personal use ([license](https://github.com/%s/blob/main/LICENSE)) · [Download](https://github.com/%s/releases) · "
+                "[Source](https://github.com/%s) · [Report an issue](https://github.com/%s/issues)\n" % (REPO, REPO, REPO, REPO))
     print("wiki pages written to", out)
 
 

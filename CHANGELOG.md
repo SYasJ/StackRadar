@@ -4,6 +4,11 @@ All notable changes to StackRadar. Versions follow [Semantic Versioning](https:/
 The single source of truth is the `VERSION` file (bump it with `scripts/bump_version.py`).
 <!-- next -->
 
+## [Unreleased]
+
+### Changed
+- **License**: StackRadar is now free for personal, non-commercial use under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use needs a paid license ([COMMERCIAL.md](COMMERCIAL.md)). Help → About shows the license, and the installers ship `LICENSE.txt`.
+
 ## [2.1.0] — 2026-10-04
 
 ### Changed

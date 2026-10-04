@@ -14,8 +14,14 @@ blocks what you deny. Other apps are monitored, and you can block a host for eve
 No, and that's on purpose: StackRadar never decrypts traffic. It inspects plain-HTTP requests fully and checks your code
 for credentials sent to unexpected places.
 
-**Is StackRadar free? Does it phone home?**
-Yes, it's free, and no, it doesn't phone home. There's no telemetry. See [Security & privacy](Security-and-Privacy.md).
+**Is StackRadar free?**
+Free for **personal, non-commercial use** under the [PolyForm Noncommercial License 1.0.0](https://github.com/SYasJ/StackRadar/blob/main/LICENSE):
+personal projects, learning, students, research, charities, schools and government. Companies can evaluate it for 30
+days. Using it at or for a company, on client work, or bundling / reselling it needs a paid
+[commercial license](https://github.com/SYasJ/StackRadar/blob/main/COMMERCIAL.md).
+
+**Does it phone home?**
+No. There's no telemetry. See [Security & privacy](Security-and-Privacy.md).
 
 **Do I need Python?**
 Not for the desktop app (it bundles its engine). From source you need Python 3.9+, with no packages.

@@ -8,3 +8,4 @@ media/video/work/
 /_site/
 /_wiki/
 desktop/build/release-notes.md
+__pycache__/

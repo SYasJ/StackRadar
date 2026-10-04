@@ -2,13 +2,13 @@
   "name": "stackradar",
   "productName": "StackRadar",
   "version": "2.1.0",
-  "description": "StackRadar \u2014 one local dashboard for every repo, app, port, secret, AI agent, skill, schedule and package on your computer.",
+  "description": "StackRadar — one local dashboard for every repo, app, port, secret, AI agent, skill, schedule and package on your computer.",
   "author": {
     "name": "Yasir Jilani",
     "email": "27597591+SYasJ@users.noreply.github.com",
     "url": "https://github.com/SYasJ"
   },
-  "license": "UNLICENSED",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "homepage": "https://github.com/SYasJ/StackRadar",
   "repository": {
     "type": "git",
@@ -48,7 +48,7 @@
     "extraMetadata": {
       "desktopName": "stackradar.desktop"
     },
-    "copyright": "\u00a9 2026 Yasir Jilani",
+    "copyright": "© 2026 Yasir Jilani",
     "artifactName": "StackRadar-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
@@ -67,6 +67,14 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "../COMMERCIAL.md",
+        "to": "COMMERCIAL.md"
       }
     ],
     "publish": [
@@ -99,7 +107,7 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "extendInfo": {
-        "NSHumanReadableCopyright": "\u00a9 Yasir Jilani"
+        "NSHumanReadableCopyright": "© Yasir Jilani"
       }
     },
     "dmg": {

@@ -40,11 +40,16 @@ def main():
     with open(cl) as f:
         text = f.read()
     stub = "## [%s] — %s\n\n- …\n" % (new, datetime.date.today().isoformat())
-    text = text.replace("<!-- next -->\n", "<!-- next -->\n\n" + stub, 1) if "<!-- next -->" in text else stub + text
+    if "## [Unreleased]" in text:   # notes collected so far become this version
+        text = text.replace("## [Unreleased]", "## [%s] — %s" % (new, datetime.date.today().isoformat()), 1)
+    elif "<!-- next -->" in text:
+        text = text.replace("<!-- next -->\n", "<!-- next -->\n\n" + stub, 1)
+    else:
+        text = stub + text
     with open(cl, "w") as f:
         f.write(text)
     print("StackRadar %s -> %s" % (cur, new))
-    print("next:  git commit -am 'StackRadar %s' && git tag v%s && git push --follow-tags" % (new, new))
+    print("next:  edit CHANGELOG.md, then git commit -am 'StackRadar %s' && git push   (a VERSION change on main starts the release)" % new)
 
 
 if __name__ == "__main__":

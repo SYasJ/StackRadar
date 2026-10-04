@@ -4,7 +4,7 @@
 
 # StackRadar — your whole stack on one local screen: repos, ports, secrets, network traffic, AI agents, skills and schedules
 
-**A free, 100% local developer-workspace dashboard for macOS, Windows and Linux.**
+**A 100% local developer-workspace dashboard for macOS, Windows and Linux. Free for personal use.**
 Find every project on your computer, see what it is and how to run it, catch leaked API keys, **see and block what each app sends to the internet**, watch CPU / memory / load,
 track Claude Code, Codex, Hermes, OpenClaw and Paperclip agents, spot unused or duplicate skills, list every cron job,
 dedupe files, compress archived projects and update outdated packages in one click.
@@ -13,6 +13,7 @@ dedupe files, compress archived projects and update outdated packages in one cli
 
 [![Latest release](https://img.shields.io/github/v/release/SYasJ/StackRadar?label=version&color=39c5e0)](https://github.com/SYasJ/StackRadar/releases/latest)
 [![CI](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml/badge.svg)](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml)
+[![License: free for personal use](https://img.shields.io/badge/license-free%20for%20personal%20use-2dd4a7)](LICENSE)
 [![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-0b0e14)](#install)
 
 [Download](#install) · [Watch the 56-second tour](media/video/stackradar-promo.mp4) · [Wiki](https://github.com/SYasJ/StackRadar/wiki) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md)
@@ -122,6 +123,13 @@ StackRadar/
 ├── VERSION · CHANGELOG.md · ROADMAP.md
 └── media/               ← screenshots, promo video
 ```
+
+## License
+
+**Free for personal, non-commercial use** under the [PolyForm Noncommercial License 1.0.0](LICENSE): personal projects,
+learning, students, research, charities, schools and government are all free, and companies can evaluate it for 30 days.
+**Commercial use** (at or for a company, client work, bundling or reselling) **needs a paid license**; see
+[COMMERCIAL.md](COMMERCIAL.md). Copyright © 2026 Yasir Jilani.
 
 ## Maintainer & releases
 

@@ -3,6 +3,9 @@
 """
 StackRadar — a local radar for your developer workspace.
 
+Copyright (c) 2026 Yasir Jilani. Free for personal, non-commercial use under the
+PolyForm Noncommercial License 1.0.0 (see LICENSE). Commercial use: see COMMERCIAL.md.
+
 Scans a folder tree and tells you, for every project/repo/app it finds:
   * what it is (purpose, language, framework), where it lives, how big it is
   * how to run it + what it needs (dependencies, env, ports)

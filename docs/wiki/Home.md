@@ -4,7 +4,7 @@
 >
 > StackRadar was called **DevRadar** until v2.1. The old name clashed with several other developer projects.
 
-**StackRadar** is a free, open, 100% local dashboard for your developer machine. It finds every repo and app in the folders
+**StackRadar** is a 100% local dashboard, free for personal use ([license](https://github.com/SYasJ/StackRadar/blob/main/LICENSE)), for your developer machine. It finds every repo and app in the folders
 you choose and shows, on one screen, what each one is, how to run it, which ports and secrets it has, which AI agents and
 skills touched it, what runs on a schedule, where your disk space went, and which packages are outdated.
 

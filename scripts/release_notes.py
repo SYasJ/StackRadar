@@ -50,7 +50,7 @@ def build(version):
     return f"""# StackRadar {v}
 
 Your whole dev stack on one local screen: repos, ports, secrets, network traffic, AI agents, skills and schedules.
-100% local, free and open source.
+100% local. Free for personal use ([PolyForm Noncommercial](https://github.com/{REPO}/blob/main/LICENSE)); commercial use needs a [license](https://github.com/{REPO}/blob/main/COMMERCIAL.md).
 
 ## Download
 
