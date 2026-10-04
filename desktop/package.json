@@ -2,12 +2,29 @@
   "name": "stackradar",
   "productName": "StackRadar",
   "version": "2.1.0",
-  "description": "StackRadar — one local dashboard for every repo, app, port, secret, AI agent, skill, schedule and package on your computer.",
-  "author": "StackRadar contributors",
+  "description": "StackRadar \u2014 one local dashboard for every repo, app, port, secret, AI agent, skill, schedule and package on your computer.",
+  "author": {
+    "name": "Yasir Jilani",
+    "email": "27597591+SYasJ@users.noreply.github.com",
+    "url": "https://github.com/SYasJ"
+  },
   "license": "UNLICENSED",
   "homepage": "https://github.com/SYasJ/StackRadar",
-  "repository": { "type": "git", "url": "https://github.com/SYasJ/StackRadar.git" },
-  "keywords": ["developer-tools", "dashboard", "workspace", "ai-agents", "claude-code", "devops", "port-monitor", "secrets-scanner", "electron"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SYasJ/StackRadar.git"
+  },
+  "keywords": [
+    "developer-tools",
+    "dashboard",
+    "workspace",
+    "ai-agents",
+    "claude-code",
+    "devops",
+    "port-monitor",
+    "secrets-scanner",
+    "electron"
+  ],
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -28,24 +45,119 @@
   "build": {
     "appId": "dev.stackradar.app",
     "productName": "StackRadar",
-    "extraMetadata": { "desktopName": "stackradar.desktop" },
-    "copyright": "StackRadar contributors",
+    "extraMetadata": {
+      "desktopName": "stackradar.desktop"
+    },
+    "copyright": "\u00a9 2026 Yasir Jilani",
     "artifactName": "StackRadar-${version}-${os}-${arch}.${ext}",
-    "directories": { "output": "release", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "loading.html", "package.json"],
-    "extraResources": [{ "from": "../dist/stackradar-server", "to": "backend", "filter": ["**/*"] }],
-    "publish": [{ "provider": "github", "owner": "SYasJ", "repo": "StackRadar", "releaseType": "release" }],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "loading.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/stackradar-server",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "SYasJ",
+        "repo": "StackRadar",
+        "releaseType": "draft"
+      }
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }, { "target": "zip", "arch": ["arm64", "x64"] }],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.png",
       "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSHumanReadableCopyright": "\u00a9 Yasir Jilani"
+      }
     },
-    "dmg": { "title": "StackRadar ${version}", "iconSize": 110, "contents": [{ "x": 150, "y": 190 }, { "x": 410, "y": 190, "type": "link", "path": "/Applications" }] },
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }], "icon": "build/icon.png" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "shortcutName": "StackRadar" },
-    "portable": { "artifactName": "StackRadar-${version}-portable.exe" },
-    "linux": { "target": ["AppImage", "deb"], "category": "Development", "icon": "build/icon.png", "maintainer": "StackRadar contributors" }
+    "dmg": {
+      "title": "StackRadar ${version}",
+      "iconSize": 110,
+      "contents": [
+        {
+          "x": 150,
+          "y": 190
+        },
+        {
+          "x": 410,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "StackRadar"
+    },
+    "portable": {
+      "artifactName": "StackRadar-${version}-portable.exe"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "maintainer": "Yasir Jilani <27597591+SYasJ@users.noreply.github.com>",
+      "synopsis": "Local dashboard & network guard for your dev stack",
+      "description": "StackRadar finds every repo on your machine and shows how to run it, open ports, leaked keys, what each app sends online (allow/deny), AI agents, skills, schedules and outdated packages."
+    },
+    "releaseInfo": {
+      "releaseNotesFile": "build/release-notes.md"
+    }
   }
 }

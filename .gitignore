@@ -7,3 +7,4 @@ media/video/work/
 *.spec
 /_site/
 /_wiki/
+desktop/build/release-notes.md

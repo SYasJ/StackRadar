@@ -25,8 +25,35 @@ jobs:
         with: { python-version: "3.12" }
       - run: python -m unittest discover -s tests -v
 
-  build:
+  # Create the draft release first so the three builds upload into one release (no race), with
+  # the generated notes: changelog + download table + install steps for unsigned macOS / Windows builds.
+  draft:
     needs: test
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches VERSION
+        run: |
+          V="$(cat VERSION)"
+          if [[ "${GITHUB_REF}" == refs/tags/v* && "${GITHUB_REF_NAME}" != "v$V" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match VERSION ($V). Run scripts/bump_version.py first."; exit 1
+          fi
+          echo "TAG=v$V" >> "$GITHUB_ENV"; echo "V=$V" >> "$GITHUB_ENV"
+      - run: python3 scripts/release_notes.py
+      - name: Draft release
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "StackRadar $V" --notes-file desktop/build/release-notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "StackRadar $V" --notes-file desktop/build/release-notes.md
+          fi
+
+  build:
+    needs: [test, draft]
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.draft.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +75,8 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK && 'true' || 'false' }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -78,6 +107,9 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci
 
+      - name: Release notes
+        run: '"$PYTHON" ../scripts/release_notes.py'
+
       - name: Freeze the StackRadar engine
         run: node scripts/build-backend.js
 
@@ -100,3 +132,27 @@ jobs:
             desktop/release/*.deb
             desktop/release/latest*.yml
           if-no-files-found: warn
+
+  # All three builds succeeded → add checksums and publish the draft (it becomes "Latest", and
+  # installed apps see the update).
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: stackradar-*
+          merge-multiple: true
+      - name: Checksums + publish
+        run: |
+          TAG="v$(cat VERSION)"
+          cd dist
+          sha256sum *.dmg *.zip *.exe *.AppImage *.deb | tee SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
+          echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"

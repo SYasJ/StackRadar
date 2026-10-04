@@ -11,7 +11,11 @@ dedupe files, compress archived projects and update outdated packages in one cli
 
 <sub>Formerly **DevRadar** (renamed in 2.1 because the old name clashed with other developer projects).</sub>
 
-[Download](#install) · [Watch the 56-second tour](media/video/stackradar-promo.mp4) · [Wiki](https://github.com/SYasJ/StackRadar/wiki) · [Changelog](CHANGELOG.md)
+[![Latest release](https://img.shields.io/github/v/release/SYasJ/StackRadar?label=version&color=39c5e0)](https://github.com/SYasJ/StackRadar/releases/latest)
+[![CI](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml/badge.svg)](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml)
+[![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-0b0e14)](#install)
+
+[Download](#install) · [Watch the 56-second tour](media/video/stackradar-promo.mp4) · [Wiki](https://github.com/SYasJ/StackRadar/wiki) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md)
 
 ![StackRadar overview dashboard: projects, secrets, risk, ports, AI agents, skills, schedules and duplicate files](media/screenshots/01-overview.jpg)
 
@@ -56,15 +60,22 @@ Every panel has an ⓘ hint, and one switch turns them all off. Features you don
 
 ### Desktop app (recommended)
 
-Download the latest release for your OS from **[GitHub Releases](https://github.com/SYasJ/StackRadar/releases)**:
+Download the latest release for your OS from **[GitHub Releases](https://github.com/SYasJ/StackRadar/releases/latest)** (current version: **2.1.0**):
 
 | OS | File | Notes |
 |---|---|---|
-| macOS (Apple silicon + Intel) | `StackRadar-x.y.z-mac-arm64.dmg` / `-x64.dmg` | Drag to Applications. Unsigned builds: right-click → **Open** the first time |
+| macOS (Apple silicon + Intel) | `StackRadar-x.y.z-mac-arm64.dmg` / `-x64.dmg` | Drag to Applications. First launch: **System Settings → Privacy & Security → Open Anyway** |
 | Windows 10/11 | `StackRadar-x.y.z-win-x64.exe` (installer) or `StackRadar-x.y.z-portable.exe` | SmartScreen may warn on unsigned builds: **More info → Run anyway** |
 | Linux | `StackRadar-x.y.z-linux-x86_64.AppImage` or `.deb` | `chmod +x` the AppImage and run it |
 
 The desktop app bundles its own engine (no Python needed) and **updates itself** from GitHub Releases.
+
+> **No Apple Developer ID or Windows certificate yet**, so macOS and Windows ask you to confirm the first launch:
+> - **macOS:** open StackRadar, click **Done**, then **System Settings → Privacy & Security → Open Anyway**. "Damaged"? Run
+>   `xattr -dr com.apple.quarantine /Applications/StackRadar.app`. Updates show a **Download** prompt (macOS only auto-installs signed apps).
+> - **Windows:** SmartScreen → **More info → Run anyway**. Updates then install by themselves.
+>
+> Every dialog, with checksums: **[Installing unsigned builds](docs/wiki/Installing-Unsigned-Builds.md)**. Signed builds are planned for 2.2 ([roadmap](ROADMAP.md)).
 
 ### Run from source (any OS, Python 3.9+, no dependencies)
 
@@ -93,7 +104,7 @@ The **[StackRadar wiki](https://github.com/SYasJ/StackRadar/wiki)** (source in [
 the [Network Guard](docs/wiki/Network-Guard.md), the [lineage graph](docs/wiki/Lineage-Graph.md), [AI agents & skills](docs/wiki/AI-Agents-and-Skills.md), [schedules](docs/wiki/Schedules.md),
 the [system monitor](docs/wiki/System-Monitor.md), [package updates](docs/wiki/Package-Updates.md), [hints & settings](docs/wiki/Hints-and-Settings.md),
 the [desktop app & auto-update](docs/wiki/Desktop-App-and-Auto-Update.md), the [local API](docs/wiki/Local-API.md),
-[releasing & versioning](docs/wiki/Releasing-and-Versioning.md), the [FAQ](docs/wiki/FAQ.md) and [troubleshooting](docs/wiki/Troubleshooting.md).
+[releasing & versioning](docs/wiki/Releasing-and-Versioning.md), the [roadmap](ROADMAP.md), the [FAQ](docs/wiki/FAQ.md) and [troubleshooting](docs/wiki/Troubleshooting.md).
 A landing page lives in [`docs/index.html`](docs/index.html) (deployed with GitHub Pages).
 
 ## Project layout
@@ -107,8 +118,8 @@ StackRadar/
 ├── docs/                ← landing page (SEO) + wiki pages
 ├── demo/                ← fake-workspace generator + screenshot script
 ├── tests/               ← unit + HTTP security tests  (python3 -m unittest discover -s tests)
-├── scripts/bump_version.py
-├── VERSION · CHANGELOG.md
+├── scripts/             ← bump_version.py · release_notes.py · publish_wiki.py
+├── VERSION · CHANGELOG.md · ROADMAP.md
 └── media/               ← screenshots, promo video
 ```
 

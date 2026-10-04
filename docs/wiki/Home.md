@@ -1,5 +1,7 @@
 # StackRadar wiki
 
+> **Current version: 2.1.0** · [Download](https://github.com/SYasJ/StackRadar/releases/latest) · [Changelog](https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md)
+>
 > StackRadar was called **DevRadar** until v2.1. The old name clashed with several other developer projects.
 
 **StackRadar** is a free, open, 100% local dashboard for your developer machine. It finds every repo and app in the folders
@@ -13,6 +15,8 @@ skills touched it, what runs on a schedule, where your disk space went, and whic
 | | |
 |---|---|
 | 🚀 [Installation](Installation.md) | Desktop app (dmg / exe / AppImage) or run from source |
+| 🔓 [Installing unsigned builds](Installing-Unsigned-Builds.md) | Open Anyway (macOS) / Run anyway (Windows), step by step |
+| 🧭 [Roadmap](Roadmap.md) | What's done, what's next |
 | ⏱ [Quick start](Quick-Start.md) | Your first scan in two minutes |
 | 🗺 [Feature tour](Features-Tour.md) | Every tab, what it shows, what you can do |
 | ❓ [FAQ](FAQ.md) · 🛠 [Troubleshooting](Troubleshooting.md) | Common questions and fixes |

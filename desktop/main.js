@@ -58,7 +58,7 @@ function startServer() {
 function createWindow() {
   win = new BrowserWindow({
     width: 1480, height: 960, minWidth: 980, minHeight: 640, show: false,
-    backgroundColor: "#0b0e14", title: "StackRadar",
+    backgroundColor: "#0b0e14", title: "StackRadar " + app.getVersion(),
     titleBarStyle: isMac ? "hiddenInset" : "default",
     icon: path.join(__dirname, "build", "icon.png"),
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -74,11 +74,29 @@ function createWindow() {
 
 function sendStatus(msg) { if (win) win.webContents.send("stackradar:update-status", msg); }
 
+function hasDeveloperIdSignature() {
+  try {
+    const appPath = path.resolve(process.execPath, "..", "..", "..");
+    const out = require("child_process").spawnSync("codesign", ["-dv", "--verbose=2", appPath], { encoding: "utf8", timeout: 5000 });
+    return /Authority=Developer ID Application/.test((out.stderr || "") + (out.stdout || ""));
+  } catch (_) { return false; }
+}
+
 function setupUpdater() {
   if (!app.isPackaged) return;
   try { autoUpdater = require("electron-updater").autoUpdater; } catch (_) { return; }
-  autoUpdater.autoDownload = true;
-  autoUpdater.on("update-available", i => sendStatus("Downloading StackRadar " + i.version + " …"));
+  // macOS only installs updates for apps signed with a Developer ID. Ad-hoc / unsigned builds get a
+  // "new version" prompt that opens the download page instead of a silent install that would fail.
+  const manual = isMac && !hasDeveloperIdSignature();
+  autoUpdater.autoDownload = !manual;
+  autoUpdater.on("update-available", async i => {
+    if (!manual) return sendStatus("Downloading StackRadar " + i.version + " …");
+    sendStatus("StackRadar " + i.version + " is available.");
+    const r = await dialog.showMessageBox(win, { type: "info", buttons: ["Download", "Later"], defaultId: 0,
+      message: "StackRadar " + i.version + " is available", detail: "You have " + app.getVersion() + ". This build isn't signed with an Apple Developer ID, " +
+        "so macOS can't install updates automatically. Download the new .dmg and drag it to Applications to replace this one." });
+    if (r.response === 0) shell.openExternal("https://github.com/SYasJ/StackRadar/releases/tag/v" + i.version);
+  });
   autoUpdater.on("update-not-available", () => sendStatus("StackRadar is up to date."));
   autoUpdater.on("error", e => sendStatus("Update check failed: " + (e && e.message ? e.message.split("\n")[0] : e)));
   autoUpdater.on("update-downloaded", async i => {
@@ -104,6 +122,8 @@ function buildMenu() {
       { type: "separator" }, isMac ? { role: "close" } : { role: "quit" }] },
     { role: "editMenu" }, { role: "viewMenu" }, { role: "windowMenu" },
     { label: "Help", submenu: [
+      { label: "About StackRadar " + app.getVersion(), click: () => dialog.showMessageBox(win, { type: "info", title: "About StackRadar",
+          message: "StackRadar " + app.getVersion(), detail: "Your whole dev stack on one local screen.\n© 2026 Yasir Jilani\nhttps://github.com/SYasJ/StackRadar" }) },
       { label: "Check for Updates…", click: checkForUpdates },
       { label: "StackRadar Wiki", click: () => shell.openExternal("https://github.com/SYasJ/StackRadar/wiki") },
       { label: "Report an Issue", click: () => shell.openExternal("https://github.com/SYasJ/StackRadar/issues") }] },

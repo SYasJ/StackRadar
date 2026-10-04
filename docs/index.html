@@ -34,7 +34,7 @@
   "softwareVersion": "2.1.0",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "description": "A local developer-workspace dashboard: project discovery, run commands, ports, masked secrets, risk flags, lineage graph, live system monitor, AI agent detection, skill usage and duplicates, cron schedules, duplicate files and one-click package updates.",
-  "downloadUrl": "https://github.com/SYasJ/StackRadar/releases",
+  "downloadUrl": "https://github.com/SYasJ/StackRadar/releases/latest",
   "screenshot": "https://syasj.github.io/StackRadar/media/screenshots/01-overview.jpg",
   "featureList": ["Network Guard: per-app outbound monitor with allow/deny prompts", "Archive compression", "Project discovery", "Masked secret scanning", "Live port and process control", "Lineage graph", "System CPU/memory/load monitor", "AI agent detection", "Skill usage and duplicate skills", "Cron and agent schedules", "Duplicate file finder", "Global and per-project package updates", "Auto-updating desktop app"]
 }
@@ -123,7 +123,7 @@
       <p class="lead">StackRadar finds every repo and app on your computer and shows how to run it, which ports and API keys it has,
         how it connects, what your AI agents and skills are doing, what runs on a schedule, and what's outdated. Nothing leaves your machine.</p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/SYasJ/StackRadar/releases">⬇ Download for macOS · Windows · Linux</a>
+        <a class="btn primary" href="https://github.com/SYasJ/StackRadar/releases/latest">⬇ Download for macOS · Windows · Linux</a>
         <a class="btn" href="#tour">▶ Watch the 56-second tour</a>
       </div>
       <div class="badges">.dmg · .exe · .AppImage · auto-updates · no telemetry · no account</div>
@@ -198,13 +198,15 @@
 
     <section id="download" aria-labelledby="h-dl">
       <h2 id="h-dl">Download</h2>
-      <p class="sub">Desktop builds bundle their own engine and keep themselves up to date.</p>
+      <p class="sub">Current version <b>2.1.0</b>. Desktop builds bundle their own engine and keep themselves up to date.</p>
       <table>
         <tr><th>OS</th><th>Get</th><th>Notes</th></tr>
-        <tr><td>macOS (Apple silicon &amp; Intel)</td><td><a href="https://github.com/SYasJ/StackRadar/releases">StackRadar-x.y.z-mac-arm64.dmg / -x64.dmg</a></td><td>Unsigned builds: right-click → Open the first time</td></tr>
-        <tr><td>Windows 10 / 11</td><td><a href="https://github.com/SYasJ/StackRadar/releases">StackRadar-x.y.z-win-x64.exe</a> or portable .exe</td><td>SmartScreen: More info → Run anyway</td></tr>
-        <tr><td>Linux</td><td><a href="https://github.com/SYasJ/StackRadar/releases">StackRadar-x.y.z-linux-x86_64.AppImage</a> or .deb</td><td><code>chmod +x</code> and run</td></tr>
+        <tr><td>macOS (Apple silicon &amp; Intel)</td><td><a href="https://github.com/SYasJ/StackRadar/releases/latest">StackRadar-x.y.z-mac-arm64.dmg / -x64.dmg</a></td><td>First launch: System Settings → Privacy &amp; Security → <b>Open Anyway</b></td></tr>
+        <tr><td>Windows 10 / 11</td><td><a href="https://github.com/SYasJ/StackRadar/releases/latest">StackRadar-x.y.z-win-x64.exe</a> or portable .exe</td><td>SmartScreen: More info → Run anyway</td></tr>
+        <tr><td>Linux</td><td><a href="https://github.com/SYasJ/StackRadar/releases/latest">StackRadar-x.y.z-linux-x86_64.AppImage</a> or .deb</td><td><code>chmod +x</code> and run</td></tr>
       </table>
+      <p>Builds aren't signed with an Apple Developer ID or Windows certificate yet, so your OS asks you to confirm once.
+        <a href="https://github.com/SYasJ/StackRadar/wiki/Installing-Unsigned-Builds">Step-by-step guide for unsigned builds →</a></p>
       <p>Prefer source? Python 3.9+, no dependencies:</p>
       <pre>git clone https://github.com/SYasJ/StackRadar.git
 cd StackRadar &amp;&amp; python3 stackradar.py --open</pre>
@@ -222,7 +224,7 @@ cd StackRadar &amp;&amp; python3 stackradar.py --open</pre>
     </section>
   </main>
 
-  <footer>StackRadar · free, open and local · <a href="https://github.com/SYasJ/StackRadar">source</a> · <a href="https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md">changelog</a></footer>
+  <footer>StackRadar · free, open and local · <a href="https://github.com/SYasJ/StackRadar">source</a> · <a href="https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md">changelog</a> · <a href="https://github.com/SYasJ/StackRadar/blob/main/ROADMAP.md">roadmap</a></footer>
 </div>
 </body>
 </html>

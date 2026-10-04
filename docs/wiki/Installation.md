@@ -2,18 +2,22 @@
 
 ## Option 1: desktop app
 
-Grab the newest build from **[GitHub Releases](https://github.com/SYasJ/StackRadar/releases)**.
+Grab the newest build from **[GitHub Releases](https://github.com/SYasJ/StackRadar/releases/latest)**.
+
+> Builds are not yet signed with an Apple Developer ID or a Windows certificate, so macOS and Windows ask you to confirm
+> once. **[Installing unsigned builds](Installing-Unsigned-Builds.md)** walks through every dialog, including the
+> *"damaged"* message on macOS and Smart App Control on Windows.
 
 ### macOS (`.dmg`)
 1. Download `StackRadar-<version>-mac-arm64.dmg` (Apple silicon) or `-mac-x64.dmg` (Intel).
 2. Open it and drag **StackRadar** to **Applications**.
-3. First launch of an unsigned build: right-click the app → **Open** → **Open**. (Signed builds open normally. See [Releasing](Releasing-and-Versioning.md#code-signing).)
+3. First launch: open the app, click **Done**, then **System Settings → Privacy & Security → Open Anyway** (macOS 14 and older: right-click the app → **Open** → **Open**). [Step by step](Installing-Unsigned-Builds.md#macos-no-apple-developer-id).
 4. macOS may ask for access to Desktop / Documents the first time StackRadar scans them. That is the normal folder-privacy prompt.
 
 ### Windows (`.exe`)
 - **Installer**: `StackRadar-<version>-win-x64.exe`. Choose a folder; it creates Start-menu and desktop shortcuts and supports auto-update.
 - **Portable**: `StackRadar-<version>-portable.exe` runs without installing (no auto-update).
-- Unsigned builds trigger SmartScreen: **More info → Run anyway**.
+- SmartScreen warns about unsigned builds: **More info → Run anyway**. [Step by step](Installing-Unsigned-Builds.md#windows-no-code-signing-certificate).
 
 ### Linux (`.AppImage` / `.deb`)
 ```bash
