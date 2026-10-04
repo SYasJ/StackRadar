@@ -4,6 +4,11 @@ All notable changes to StackRadar. Versions follow [Semantic Versioning](https:/
 The single source of truth is the `VERSION` file (bump it with `scripts/bump_version.py`).
 <!-- next -->
 
+## [Unreleased]
+
+### Fixed
+- "Keep this, link the rest" for duplicate skills now works when no Trash is available: old copies go to `~/.stackradar/backups/skills/`.
+
 ## [2.2.0] — 2026-10-04
 
 The "control centre" release: everything StackRadar shows, you can now act on.

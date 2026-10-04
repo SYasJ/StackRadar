@@ -4707,9 +4707,14 @@ def skill_action(action, path, agent=None, keep=None):
             elif os.path.exists(loc):
                 r = do_delete(loc)
                 if not r.get("ok"):
-                    log.append("couldn't replace %s: %s" % (loc, r.get("error")))
-                    continue
-                log.append("moved the old copy at %s to the Trash" % loc)
+                    # no Trash available (e.g. Windows without the Recycle Bin): keep it in StackRadar's backups
+                    bdir = os.path.join(os.path.expanduser("~/.stackradar"), "backups", "skills")
+                    os.makedirs(bdir, exist_ok=True)
+                    dest = _unique_name(os.path.join(bdir, "%s-%s" % (os.path.basename(loc), datetime.now().strftime("%Y%m%d-%H%M%S"))))
+                    shutil.move(loc, dest)
+                    log.append("moved the old copy at %s to %s" % (loc, dest))
+                else:
+                    log.append("moved the old copy at %s to the Trash" % loc)
             how = _make_link(shared, loc)
             log.append("linked %s → shared (%s)" % (loc, how))
         if not os.path.lexists(keep_rec["folder"]):
