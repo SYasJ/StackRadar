@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>StackRadar</title>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="35%" r="75%">
+      <stop offset="0" stop-color="#173058"/><stop offset="1" stop-color="#070a12"/>
+    </radialGradient>
+    <linearGradient id="sweep" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#39c5e0" stop-opacity="0"/><stop offset="1" stop-color="#39c5e0" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="l1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4d9fff"/><stop offset="1" stop-color="#2a63e8"/></linearGradient>
+    <linearGradient id="l2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3fe0b4"/><stop offset="1" stop-color="#159b78"/></linearGradient>
+    <linearGradient id="l3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8fe9fa"/><stop offset="1" stop-color="#39c5e0"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- radar -->
+  <g fill="none" stroke="#39c5e0" stroke-width="9">
+    <circle cx="256" cy="256" r="196" stroke-opacity=".28"/>
+    <circle cx="256" cy="256" r="140" stroke-opacity=".18"/>
+  </g>
+  <path d="M256 256 L256 60 A196 196 0 0 1 425 158 Z" fill="url(#sweep)"/>
+  <line x1="256" y1="256" x2="425" y2="158" stroke="#39c5e0" stroke-width="8" stroke-linecap="round" stroke-opacity=".9"/>
+  <!-- the stack: three isometric layers -->
+  <g stroke="#070a12" stroke-width="7" stroke-linejoin="round">
+    <path d="M256 268 L380 330 L256 392 L132 330 Z" fill="url(#l1)"/>
+    <path d="M256 216 L380 278 L256 340 L132 278 Z" fill="url(#l2)"/>
+    <path d="M256 164 L380 226 L256 288 L132 226 Z" fill="url(#l3)"/>
+  </g>
+  <!-- signal blips: outgoing (cyan, arrow out) / incoming (green, arrow in) -->
+  <circle cx="404" cy="132" r="17" fill="#39c5e0"/>
+  <circle cx="404" cy="132" r="31" fill="none" stroke="#39c5e0" stroke-width="5" stroke-opacity=".5"/>
+  <circle cx="112" cy="398" r="14" fill="#2dd4a7"/>
+  <circle cx="112" cy="398" r="27" fill="none" stroke="#2dd4a7" stroke-width="5" stroke-opacity=".45"/>
+</svg>

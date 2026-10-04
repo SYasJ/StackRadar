@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="stackradar-token" content="__STACKRADAR_TOKEN__">
+<meta name="stackradar-version" content="__STACKRADAR_VERSION__">
+<meta name="description" content="StackRadar — a local dashboard for every repo, app, port, secret, AI agent, skill and schedule on your computer.">
+<title>StackRadar — workspace radar</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+</head>
+<body>
+<header id="topbar">
+  <button id="sideToggle" class="icon-btn" title="collapse / expand the sidebar" aria-label="toggle sidebar">☰</button>
+  <div class="brand"><img src="/static/icon.svg" class="logo-img" alt=""> StackRadar <span class="ver-pill" id="verPill">v__STACKRADAR_VERSION__</span></div>
+  <div class="scan-box">
+    <input id="rootInput" type="text" placeholder="folder to scan (e.g. ~/Projects)" aria-label="folder to scan">
+    <select id="depthSel" title="scan depth" aria-label="scan depth">
+      <option value="4">depth 4</option>
+      <option value="6" selected>depth 6</option>
+      <option value="8">depth 8</option>
+    </select>
+    <button id="scanBtn" class="btn primary">Scan</button>
+    <button id="exportBtn" class="btn" title="export current data as JSON">Export</button>
+  </div>
+  <div class="top-right">
+    <button id="shieldBtn" class="shield" title="Network Guard">🛡</button>
+    <div id="sysMini" class="sys-mini" title="live system load — click for details"></div>
+    <label class="switch" title="show / hide the ⓘ hints on every feature">
+      <input type="checkbox" id="hintsToggle" checked><span class="slider"></span><span class="switch-label">Hints</span>
+    </label>
+    <button id="settingsBtn" class="icon-btn" title="settings, feature toggles & app updates" aria-label="settings">⚙</button>
+  </div>
+  <div id="scanStatus" class="scan-status">
+    <div id="scanBarWrap" class="scan-bar-wrap" hidden><div id="scanBar" class="scan-bar"></div></div>
+    <span id="scanText"></span>
+  </div>
+</header>
+
+<div id="shell">
+  <nav id="nav" aria-label="sections">
+    <div class="nav-group">Workspace</div>
+    <button data-tab="overview" class="active"><span class="ni">◎</span><span class="nl">Overview</span></button>
+    <button data-tab="projects"><span class="ni">▦</span><span class="nl">Projects</span></button>
+    <button data-tab="runs" data-feature="runs"><span class="ni">▶</span><span class="nl">Runs</span></button>
+    <button data-tab="lineage" data-feature="lineage"><span class="ni">✺</span><span class="nl">Lineage</span></button>
+    <div class="nav-group">Security</div>
+    <button data-tab="network" data-feature="network"><span class="ni">🛡</span><span class="nl">Network Guard</span><span class="nbadge" id="nbNet"></span></button>
+    <div class="nav-group">Machine</div>
+    <button data-tab="system" data-feature="system"><span class="ni">♥</span><span class="nl">System</span></button>
+    <button data-tab="env"><span class="ni">⌘</span><span class="nl">Environment</span></button>
+    <button data-tab="updates" data-feature="updates"><span class="ni">⬆</span><span class="nl">Updates</span><span class="nbadge" id="nbUpdates"></span></button>
+    <div class="nav-group">AI</div>
+    <button data-tab="agents" data-feature="agents"><span class="ni">🤖</span><span class="nl">Agents</span><span class="nbadge" id="nbAgents"></span></button>
+    <button data-tab="skills" data-feature="skills"><span class="ni">✪</span><span class="nl">Skills</span><span class="nbadge" id="nbSkills"></span></button>
+    <button data-tab="schedules" data-feature="schedules"><span class="ni">⏰</span><span class="nl">Schedules</span><span class="nbadge" id="nbSched"></span></button>
+    <div class="nav-group">Clean-up</div>
+    <button data-tab="duplicates" data-feature="duplicates"><span class="ni">⧉</span><span class="nl">Duplicates</span><span class="nbadge" id="nbDupes"></span></button>
+    <button data-tab="reclaim" data-feature="reclaim"><span class="ni">♻</span><span class="nl">Reclaim space</span></button>
+    <div class="nav-foot">
+      <a href="https://github.com/SYasJ/StackRadar/wiki" target="_blank" rel="noopener">Wiki &amp; docs ↗</a>
+      <span class="muted small">100% local · no telemetry</span>
+    </div>
+  </nav>
+
+  <main>
+    <section id="tab-overview" class="tab active"></section>
+    <section id="tab-projects" class="tab"></section>
+    <section id="tab-runs" class="tab"></section>
+    <section id="tab-lineage" class="tab">
+      <div id="lineageHint"></div>
+      <div class="lineage-controls">
+        <label>Focus <select id="lineageSel"></select></label>
+        <div class="seg" id="layoutSeg" role="group" aria-label="layout">
+          <button data-layout="force" class="active" title="organic force-directed graph">Force</button>
+          <button data-layout="radial" title="projects in a ring, everything else orbits">Radial</button>
+          <button data-layout="columns" title="left → right lineage: origin → project → runtime → deps → ports">Flow</button>
+        </div>
+        <input id="gSearch" class="search-in" placeholder="find a node…" aria-label="find a node">
+        <label class="switch small" title="animated data flowing along the links">
+          <input type="checkbox" id="motionToggle" checked><span class="slider"></span><span class="switch-label">Motion</span>
+        </label>
+        <span class="spacer"></span>
+        <button id="fitBtn" class="btn" title="fit graph to screen">⤢ Fit</button>
+        <button id="pngBtn" class="btn">Save PNG</button>
+        <button id="jsonBtn" class="btn">Save JSON</button>
+      </div>
+      <div class="lineage-wrap">
+        <div class="legend" id="legend"></div>
+        <canvas id="gcanvas"></canvas>
+        <div class="g-stats" id="gStats"></div>
+        <div class="g-help">drag nodes · scroll to zoom · drag background to pan · click a legend item to hide that type</div>
+        <div id="nodeInfo" class="node-info" hidden></div>
+        <div id="gtooltip" class="gtooltip" hidden></div>
+      </div>
+    </section>
+    <section id="tab-network" class="tab"></section>
+    <section id="tab-system" class="tab"></section>
+    <section id="tab-env" class="tab"></section>
+    <section id="tab-updates" class="tab"></section>
+    <section id="tab-agents" class="tab"></section>
+    <section id="tab-skills" class="tab"></section>
+    <section id="tab-schedules" class="tab"></section>
+    <section id="tab-duplicates" class="tab"></section>
+    <section id="tab-reclaim" class="tab"></section>
+  </main>
+</div>
+
+<aside id="drawer" class="drawer">
+  <button id="drawerClose" class="drawer-close" aria-label="close">✕</button>
+  <div id="drawerBody"></div>
+</aside>
+
+<div id="modalBack" class="modal-back" hidden>
+  <div class="modal" id="modalBox"></div>
+</div>
+
+<div id="toasts"></div>
+<script src="/static/app.js"></script>
+<script src="/static/features.js"></script>
+<script src="/static/lineage.js"></script>
+<script src="/static/network.js"></script>
+</body>
+</html>

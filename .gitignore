@@ -1,0 +1,8 @@
+# build outputs (regenerable)
+/dist/
+/build/
+desktop/node_modules/
+desktop/release/
+media/video/work/
+*.spec
+/_site/

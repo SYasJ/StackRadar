@@ -1,0 +1,102 @@
+name: StackRadar Release (dmg / exe / AppImage)
+
+# Push a tag like v2.0.0 (see scripts/bump_version.py) to build installers for
+# macOS, Windows and Linux and publish them to a GitHub Release. The desktop app's
+# auto-updater (electron-updater) reads that release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to GitHub Releases (otherwise just upload build artifacts)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # unsigned builds unless you add signing secrets (CSC_LINK / CSC_KEY_PASSWORD, APPLE_ID …)
+      CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK && 'true' || 'false' }}
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python (macOS — universal2 from python.org so one backend runs on Intel + Apple silicon)
+        if: runner.os == 'macOS'
+        run: |
+          curl -sSLo /tmp/py.pkg https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+          sudo installer -pkg /tmp/py.pkg -target /
+          echo "PYTHON=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" >> "$GITHUB_ENV"
+          echo "DR_UNIVERSAL=1" >> "$GITHUB_ENV"
+      - name: Python (Windows / Linux)
+        if: runner.os != 'macOS'
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: PyInstaller
+        run: |
+          PY="${PYTHON:-python}"
+          "$PY" -m pip install --upgrade pip pyinstaller
+          echo "PYTHON=$PY" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+
+      - name: Freeze the StackRadar engine
+        run: node scripts/build-backend.js
+
+      - name: Build installers
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* || "${{ inputs.publish }}" == "true" ]]; then PUB=always; else PUB=never; fi
+          EXTRA=""
+          # no Apple certificate → ad-hoc sign so Apple-silicon Macs will launch it (Gatekeeper still asks once)
+          if [[ "${{ runner.os }}" == "macOS" && -z "$CSC_LINK" ]]; then EXTRA="-c.mac.identity=-"; fi
+          npx electron-builder ${{ matrix.target }} --publish "$PUB" $EXTRA
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stackradar-${{ runner.os }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+            desktop/release/latest*.yml
+          if-no-files-found: warn

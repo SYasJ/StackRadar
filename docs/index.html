@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StackRadar: Local Dashboard &amp; Network Guard for Your Dev Stack: Repos, Ports, Secrets, AI Agents</title>
+<meta name="description" content="StackRadar is a free, 100% local desktop app for macOS, Windows and Linux that finds every repo on your computer and shows how to run it, open ports, leaked API keys, which apps send data to the internet (with allow / deny), CPU and memory load, Claude Code / Codex / Hermes / OpenClaw / Paperclip agents, skill usage, cron schedules, duplicate files and outdated packages.">
+<meta name="keywords" content="developer dashboard, application firewall, outbound network monitor, allow deny connections, data exfiltration detection, local dev environment, project finder, port monitor, API key scanner, secrets detection, Claude Code, Codex CLI, Hermes Agent, OpenClaw, Paperclip, AI agents, MCP servers, SKILL.md, skills manager, cron job viewer, duplicate file finder, outdated npm packages, pip, Homebrew, system monitor, macOS app, Windows app, Linux AppImage">
+<meta name="author" content="StackRadar contributors">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#0b0e14">
+<link rel="canonical" href="https://syasj.github.io/StackRadar/">
+<link rel="icon" href="static/icon.svg" type="image/svg+xml">
+<!-- Open Graph / social -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="StackRadar">
+<meta property="og:title" content="StackRadar: your whole dev machine on one local screen">
+<meta property="og:description" content="Repos, ports, secrets, AI agents, skills, schedules, duplicates and package updates in one free, private desktop app.">
+<meta property="og:url" content="https://syasj.github.io/StackRadar/">
+<meta property="og:image" content="https://syasj.github.io/StackRadar/media/screenshots/01-overview.jpg">
+<meta property="og:image:alt" content="StackRadar overview dashboard">
+<meta property="og:video" content="https://syasj.github.io/StackRadar/media/video/stackradar-promo.mp4">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="StackRadar: your whole dev machine on one local screen">
+<meta name="twitter:description" content="Free, 100% local dashboard for repos, ports, secrets, AI agents (Claude Code, Codex, Hermes, OpenClaw, Paperclip), skills and schedules.">
+<meta name="twitter:image" content="https://syasj.github.io/StackRadar/media/screenshots/01-overview.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "StackRadar",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Windows, Linux",
+  "softwareVersion": "2.1.0",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "description": "A local developer-workspace dashboard: project discovery, run commands, ports, masked secrets, risk flags, lineage graph, live system monitor, AI agent detection, skill usage and duplicates, cron schedules, duplicate files and one-click package updates.",
+  "downloadUrl": "https://github.com/SYasJ/StackRadar/releases",
+  "screenshot": "https://syasj.github.io/StackRadar/media/screenshots/01-overview.jpg",
+  "featureList": ["Network Guard: per-app outbound monitor with allow/deny prompts", "Archive compression", "Project discovery", "Masked secret scanning", "Live port and process control", "Lineage graph", "System CPU/memory/load monitor", "AI agent detection", "Skill usage and duplicate skills", "Cron and agent schedules", "Duplicate file finder", "Global and per-project package updates", "Auto-updating desktop app"]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Does StackRadar send my data anywhere?", "acceptedAnswer": { "@type": "Answer", "text": "No. StackRadar runs entirely on your computer, listens only on 127.0.0.1, and has no telemetry. Network calls happen only when you click to check or install package updates or check for a StackRadar update." } },
+    { "@type": "Question", "name": "Which AI coding agents does StackRadar detect?", "acceptedAnswer": { "@type": "Answer", "text": "Claude Code, Codex CLI, Hermes Agent, OpenClaw, Paperclip, Gemini CLI, Cursor, Windsurf, GitHub Copilot CLI, OpenCode, Goose, Aider, Qwen Code, Amp, Kiro, Continue, Cline/Roo, Ollama and LM Studio." } },
+    { "@type": "Question", "name": "Do I need Python to use StackRadar?", "acceptedAnswer": { "@type": "Answer", "text": "Not for the desktop app, which bundles its own engine. To run from source you need Python 3.9 or newer and no extra packages." } }
+  ]
+}
+</script>
+<style>
+  :root { --bg: #0b0e14; --panel: #121826; --line: #223049; --text: #e8ecf5; --dim: #8b97ad; --cyan: #39c5e0; --blue: #3987e5; --green: #2dd4a7; }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: radial-gradient(1200px 700px at 75% -10%, #16274a 0%, var(--bg) 60%) fixed, var(--bg); color: var(--text);
+    font: 16px/1.6 -apple-system, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--cyan); }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 16px; }
+  header.top { display: flex; align-items: center; gap: 12px; padding: 18px 0; }
+  header.top img { width: 34px; height: 34px; }
+  header.top b { font-size: 19px; }
+  header.top nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+  header.top nav a { color: var(--dim); text-decoration: none; }
+  header.top nav a:hover { color: var(--text); }
+  .hero { text-align: center; padding: 56px 0 30px; }
+  .hero h1 { font-size: clamp(34px, 6vw, 64px); line-height: 1.03; letter-spacing: -0.035em; margin: 0 0 18px; }
+  .hero h1 span { color: var(--cyan); }
+  .hero p.lead { font-size: clamp(17px, 2.2vw, 21px); color: #c3cde0; max-width: 780px; margin: 0 auto 28px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 12px 22px; border-radius: 12px; text-decoration: none; font-weight: 700; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+  .btn.primary { background: #1c4fd7; border-color: #2a63e8; }
+  .badges { margin-top: 18px; color: var(--dim); font-size: 14px; }
+  .shot { margin: 40px auto 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 40px 100px rgba(0,0,0,.6), 0 0 90px rgba(57,197,224,.12); }
+  .shot img, .shot video { display: block; width: 100%; height: auto; }
+  section { padding: 64px 0 8px; }
+  section h2 { font-size: clamp(26px, 3.6vw, 38px); letter-spacing: -0.02em; margin: 0 0 8px; }
+  section p.sub { color: var(--dim); margin: 0 0 28px; max-width: 760px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .card h3 { margin: 6px 0 6px; font-size: 18px; }
+  .card p { margin: 0; color: #b7c2d6; font-size: 15px; }
+  .card .ic { font-size: 22px; }
+  .feature { display: grid; grid-template-columns: 1fr 1.25fr; gap: 32px; align-items: center; margin: 46px 0; }
+  .feature:nth-child(even) { grid-template-columns: 1.25fr 1fr; }
+  .feature:nth-child(even) .txt { order: 2; }
+  .feature img { width: 100%; border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+  .feature h3 { font-size: 26px; margin: 0 0 10px; letter-spacing: -0.02em; }
+  .feature ul { padding-left: 18px; color: #c3cde0; }
+  .kicker { font: 600 12px/1 ui-monospace, "JetBrains Mono", Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--cyan); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; }
+  code { background: #0a0f18; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: 14px; }
+  pre { background: #0a0f18; border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; font-size: 14px; }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 700; }
+  footer { color: var(--dim); font-size: 14px; padding: 60px 0 40px; text-align: center; }
+  @media (max-width: 760px) {
+    .feature, .feature:nth-child(even) { grid-template-columns: 1fr; }
+    .feature:nth-child(even) .txt { order: 0; }
+    header.top nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <img src="static/icon.svg" alt="StackRadar logo">
+    <b>StackRadar</b>
+    <nav aria-label="page">
+      <a href="#features">Features</a><a href="#agents">AI agents</a><a href="#download">Download</a>
+      <a href="#faq">FAQ</a><a href="https://github.com/SYasJ/StackRadar/wiki">Wiki</a>
+      <a href="https://github.com/SYasJ/StackRadar">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="kicker">free · open · 100% local</div>
+      <h1>Your whole dev machine,<br><span>on one screen.</span></h1>
+      <p class="lead">StackRadar finds every repo and app on your computer and shows how to run it, which ports and API keys it has,
+        how it connects, what your AI agents and skills are doing, what runs on a schedule, and what's outdated. Nothing leaves your machine.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/SYasJ/StackRadar/releases">⬇ Download for macOS · Windows · Linux</a>
+        <a class="btn" href="#tour">▶ Watch the 56-second tour</a>
+      </div>
+      <div class="badges">.dmg · .exe · .AppImage · auto-updates · no telemetry · no account</div>
+      <div class="shot"><img src="media/screenshots/01-overview.jpg" alt="StackRadar overview dashboard with projects, secrets, ports, AI agents, skills, schedules and duplicate files" width="1600" height="1000"></div>
+    </div>
+
+    <section id="features" aria-labelledby="h-features">
+      <h2 id="h-features">Everything you lost track of</h2>
+      <p class="sub">Built for developers who vibe-code with several AI agents and end up with dozens of half-finished projects.</p>
+      <div class="grid">
+        <div class="card"><div class="ic">📦</div><h3>Every project, explained</h3><p>Purpose, language, size, git origin and the exact command to run it, found automatically.</p></div>
+        <div class="card"><div class="ic">🔑</div><h3>Leaked keys, masked</h3><p>OpenAI, Anthropic, AWS, Stripe, GitHub tokens and DB passwords, plus <code>.env</code> files git would commit.</p></div>
+        <div class="card"><div class="ic">🛡</div><h3>Network Guard</h3><p>See every app that talks to the internet, bytes ↑ / ↓, the exact file and line, and allow or deny it. Low / Medium / Strict.</p></div>
+        <div class="card"><div class="ic">⇄</div><h3>Ports &amp; live runs</h3><p>What's listening right now, the ports each app should use, start / stop / restart on another port.</p></div>
+        <div class="card"><div class="ic">✺</div><h3>Lineage graph</h3><p>Projects ↔ runtimes ↔ dependencies ↔ ports ↔ secrets ↔ agents ↔ skills ↔ schedules, in force, radial or flow layout.</p></div>
+        <div class="card"><div class="ic">♥</div><h3>System load</h3><p>Live CPU per core, load average, memory, swap, disks, network and the heaviest processes.</p></div>
+        <div class="card"><div class="ic">🤖</div><h3>AI agents</h3><p>Claude Code, Codex, Hermes, OpenClaw, Paperclip and 14 more: sessions, MCP servers, tokens, running or not.</p></div>
+        <div class="card"><div class="ic">✪</div><h3>Skills that matter</h3><p>Which skills and slash commands you actually use, which are never used, and which are duplicated across agents.</p></div>
+        <div class="card"><div class="ic">⏰</div><h3>Schedules</h3><p>Repo crons, crontab, launchd, systemd timers, Task Scheduler and agent cron jobs, with next-run countdowns.</p></div>
+        <div class="card"><div class="ic">⧉</div><h3>Duplicates &amp; space</h3><p>Hash-verified duplicate files, copied projects, reclaimable caches, and archived projects compressed into one verified file.</p></div>
+        <div class="card"><div class="ic">⬆</div><h3>One-click updates</h3><p>Outdated npm -g, pip, Homebrew and per-project packages, updated from the app with a live log.</p></div>
+        <div class="card"><div class="ic">💡</div><h3>Hints you can switch off</h3><p>An ⓘ on every panel and a tip per tab. One switch hides them, and Settings hides whole features.</p></div>
+        <div class="card"><div class="ic">🔒</div><h3>Private by design</h3><p>Localhost-only server, per-launch token, masked secrets, Trash-first deletes, no telemetry.</p></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-deep">
+      <h2 id="h-deep">A closer look</h2>
+      <div class="feature">
+        <div class="txt"><div class="kicker">lineage</div><h3>See how everything connects</h3>
+          <ul><li>Glowing project nodes, animated data flow along gradient links</li><li>Force, radial and left→right flow layouts</li>
+          <li>Click the legend to hide types; search, fit, export PNG / JSON</li><li>Shared dependencies and agents link your projects together</li></ul></div>
+        <img src="media/screenshots/03-lineage.jpg" alt="StackRadar lineage graph of projects, dependencies, ports, secrets, agents, skills and schedules" loading="lazy" width="1600" height="1000">
+      </div>
+      <div class="feature" id="network">
+        <div class="txt"><div class="kicker">network guard</div><h3>Who is sending your data?</h3>
+          <ul><li>Live signal radar: data flowing out ↑ and in ↓ for every app</li><li>Each connection traced to the file and line that calls that host</li>
+          <li>Allow once, always allow, deny: Low, Medium or Strict</li><li>Secrets and personal data in plain-HTTP requests are flagged or blocked. HTTPS is never decrypted</li></ul></div>
+        <img src="media/screenshots/18-network-prompt.jpg" alt="StackRadar Network Guard asking whether to allow an app to connect to api.openai.com, with the source line" loading="lazy" width="1600" height="1000">
+      </div>
+      <div class="feature">
+        <div class="txt"><div class="kicker">system</div><h3>Is your machine struggling?</h3>
+          <ul><li>CPU ring, per-core bars, load average vs. cores</li><li>Memory, swap, disk and network with 5-minute sparklines</li>
+          <li>Heaviest processes, with a stop button for ones that belong to your projects</li></ul></div>
+        <img src="media/screenshots/04-system.jpg" alt="StackRadar live system monitor with CPU, memory, load average and top processes" loading="lazy" width="1600" height="1000">
+      </div>
+      <div class="feature" id="agents">
+        <div class="txt"><div class="kicker">ai agents</div><h3>Every AI agent, one view</h3>
+          <ul><li>Claude Code · Codex CLI · Hermes Agent · OpenClaw · Paperclip · Gemini CLI · Cursor · Windsurf · Copilot CLI · OpenCode · Goose · Aider · Qwen Code · Amp · Kiro · Continue · Cline/Roo · Ollama · LM Studio</li>
+          <li>Version, sessions, MCP servers, tokens, skills, running processes and ports</li></ul></div>
+        <img src="media/screenshots/05-agents.jpg" alt="StackRadar AI agents tab showing Claude Code, Codex CLI, Hermes Agent, OpenClaw and Paperclip" loading="lazy" width="1600" height="1000">
+      </div>
+      <div class="feature">
+        <div class="txt"><div class="kicker">skills</div><h3>Skills you actually use</h3>
+          <ul><li>Every SKILL.md, slash command and sub-agent across agents and projects</li><li>Real usage counts from local session logs</li>
+          <li>Never-used skills and duplicate skills (identical vs. different copies)</li></ul></div>
+        <img src="media/screenshots/06-skills.jpg" alt="StackRadar skills tab with usage bars and duplicate skill badges" loading="lazy" width="1600" height="1000">
+      </div>
+      <div class="feature">
+        <div class="txt"><div class="kicker">schedules</div><h3>What runs at 2 a.m.?</h3>
+          <ul><li>GitHub Actions, Vercel, node-cron, Celery beat, Kubernetes CronJobs</li><li>crontab, launchd, systemd timers, Windows Task Scheduler</li>
+          <li>OpenClaw and Hermes agent jobs. 24-hour timeline and a cron playground</li></ul></div>
+        <img src="media/screenshots/07-schedules.jpg" alt="StackRadar schedules tab with a 24-hour timeline and next-run table" loading="lazy" width="1600" height="1000">
+      </div>
+    </section>
+
+    <section id="tour" aria-labelledby="h-tour">
+      <h2 id="h-tour">The 56-second tour</h2>
+      <div class="shot"><video controls preload="none" poster="media/video/poster.jpg" width="1280" height="720">
+        <source src="media/video/stackradar-promo.mp4" type="video/mp4">Your browser can't play this video. <a href="media/video/stackradar-promo.mp4">Download it</a>.</video></div>
+    </section>
+
+    <section id="download" aria-labelledby="h-dl">
+      <h2 id="h-dl">Download</h2>
+      <p class="sub">Desktop builds bundle their own engine and keep themselves up to date.</p>
+      <table>
+        <tr><th>OS</th><th>Get</th><th>Notes</th></tr>
+        <tr><td>macOS (Apple silicon &amp; Intel)</td><td><a href="https://github.com/SYasJ/StackRadar/releases">StackRadar-x.y.z-mac-arm64.dmg / -x64.dmg</a></td><td>Unsigned builds: right-click → Open the first time</td></tr>
+        <tr><td>Windows 10 / 11</td><td><a href="https://github.com/SYasJ/StackRadar/releases">StackRadar-x.y.z-win-x64.exe</a> or portable .exe</td><td>SmartScreen: More info → Run anyway</td></tr>
+        <tr><td>Linux</td><td><a href="https://github.com/SYasJ/StackRadar/releases">StackRadar-x.y.z-linux-x86_64.AppImage</a> or .deb</td><td><code>chmod +x</code> and run</td></tr>
+      </table>
+      <p>Prefer source? Python 3.9+, no dependencies:</p>
+      <pre>git clone https://github.com/SYasJ/StackRadar.git
+cd StackRadar &amp;&amp; python3 stackradar.py --open</pre>
+    </section>
+
+    <section id="faq" aria-labelledby="h-faq">
+      <h2 id="h-faq">FAQ</h2>
+      <details><summary>Does StackRadar send my data anywhere?</summary><p>No. It runs entirely on your computer, listens only on 127.0.0.1 and has no telemetry. Network calls happen only when you click to check or install package updates, or to check for a StackRadar update.</p></details>
+      <details><summary>Which AI coding agents does it detect?</summary><p>Claude Code, Codex CLI, Hermes Agent, OpenClaw, Paperclip, Gemini CLI, Cursor, Windsurf, GitHub Copilot CLI, OpenCode, Goose, Aider, Qwen Code, Amp, Kiro, Continue, Cline/Roo, Ollama and LM Studio.</p></details>
+      <details><summary>Can StackRadar block an app from connecting to the internet?</summary><p>Yes. Apps started from StackRadar run behind its Network Guard, which asks before every new destination (Low / Medium / Strict). Any other app can be blocked per host at the OS firewall with one click and an admin prompt.</p></details>
+      <details><summary>Do I need Python?</summary><p>Not for the desktop app. From source you need Python 3.9+ and no extra packages.</p></details>
+      <details><summary>Can I turn off hints or features I don't need?</summary><p>Yes. Flip the Hints switch in the top bar, and hide whole tabs in Settings → Features.</p></details>
+      <details><summary>Will it delete or kill things by accident?</summary><p>Deletes go to the Trash / Recycle Bin, and permanent delete needs the folder name typed. Kill only targets processes inside your scanned projects.</p></details>
+      <p><a href="https://github.com/SYasJ/StackRadar/wiki">Read the full wiki →</a></p>
+    </section>
+  </main>
+
+  <footer>StackRadar · free, open and local · <a href="https://github.com/SYasJ/StackRadar">source</a> · <a href="https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md">changelog</a></footer>
+</div>
+</body>
+</html>
