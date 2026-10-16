@@ -18,6 +18,11 @@ updates:
     groups:
       dev-tools:
         patterns: ["*"]
+    ignore:
+      # StackRadar supports Python 3.9 (the python3 that ships with macOS); pytest 9 requires 3.10+.
+      # Remove this once requires-python moves to >=3.10.
+      - dependency-name: pytest
+        versions: [">=9"]
 
   # Desktop app (Electron, electron-builder, electron-updater)
   - package-ecosystem: npm
