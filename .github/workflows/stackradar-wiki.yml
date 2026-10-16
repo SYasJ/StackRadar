@@ -14,7 +14,7 @@ jobs:
   wiki:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Clone the wiki
         run: git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" _wiki
       - name: Build pages
