@@ -74,9 +74,3 @@ extend-exclude = ["desktop/node_modules", "desktop/release", "dist", "build", "_
 [tool.ruff.lint]
 # Pyflakes (undefined names, unused imports/variables, ...) + syntax errors.
 select = ["E9", "F"]
-
-[tool.ruff.lint.per-file-ignores]
-# Known leftovers (unused locals / one unused test import); cleanup is tracked separately.
-"stackradar.py" = ["F841"]
-"demo/make_demo_workspace.py" = ["F841"]
-"tests/test_network_archive.py" = ["F401"]

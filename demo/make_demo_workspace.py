@@ -224,7 +224,7 @@ def main():
             lines.append({"type": "assistant", "cwd": os.path.join(WORK, proj), "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts + i * 60 + 5)),
                           "message": {"model": model, "content": content, "usage": {"input_tokens": 1800 + i * 90, "output_tokens": 420 + i * 30,
                                                                                     "cache_read_input_tokens": 12000, "cache_creation_input_tokens": 900}}})
-        fp = w(os.path.join(".claude", "projects", enc, sid + ".jsonl"), "\n".join(json.dumps(l) for l in lines) + "\n", base=HOME)
+        w(os.path.join(".claude", "projects", enc, sid + ".jsonl"), "\n".join(json.dumps(l) for l in lines) + "\n", base=HOME)
         os.utime(os.path.join(HOME, ".claude", "projects", enc, sid + ".jsonl"), (ts + 800, ts + 800))
     claude_log("vibe-portfolio", ["frontend-design", "brand-voice", "frontend-design", "pdf"], entry="claude-desktop", title="Portfolio hero + about page")
     claude_log("next-shop", ["code-review", "code-review", "changelog", "anthropic-skills:xlsx"], model="claude-sonnet-4-5", entry="claude-vscode", title="Stripe checkout flow")

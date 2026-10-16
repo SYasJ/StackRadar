@@ -896,7 +896,6 @@ def scan_shell_history(project_path, base_name):
         if not os.path.isfile(fp):
             continue
         text = read_head(fp, 2_000_000)
-        t_re = None
         if fp.endswith("fish_history"):
             try:
                 data = json.loads(text)
@@ -937,7 +936,6 @@ def detect_run_command(root, manifest, text_samples):
     if os.path.isfile(pj):
         data = parse_package_json(pj)
         scripts = data.get("scripts") or {}
-        pkg = data.get("name") or ""
         deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}
         pm = "npm"
         if os.path.isfile(os.path.join(root, "pnpm-lock.yaml")):
@@ -1895,7 +1893,7 @@ def do_scan(roots, max_depth):
     SCAN["roots"] = roots
     SCAN["progress"] = {"dirs": 0, "projects_done": 0, "projects_total": 0}
     try:
-        projects, subtree = [], {}
+        projects = []
         all_subtree = {}
         for root in roots:
             root = os.path.abspath(os.path.expanduser(root))
@@ -1939,7 +1937,7 @@ def do_scan(roots, max_depth):
             else:
                 listeners = get_listeners_linux()
                 procs = get_processes_linux()
-        except Exception as e:
+        except Exception:
             listeners, procs = [], []
 
         # link listeners/processes to projects
@@ -2001,7 +1999,7 @@ def do_scan(roots, max_depth):
                 for srow in a.get("session_list") or []:
                     c = srow.get("cwd")
                     srow["project"] = next((n for pth, n in ppaths if c and (c == pth or c.startswith(pth + os.sep))), None)
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
             agents = []
         try:
@@ -6011,7 +6009,6 @@ def scan_sensitive(text):
 
 def extract_net_refs(root, files, deps):
     refs, seen = [], set()
-    secret_lines = {}
     for fp in files:
         ext = os.path.splitext(fp)[1].lower()
         b = os.path.basename(fp)

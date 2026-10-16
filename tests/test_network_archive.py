@@ -1,6 +1,5 @@
 """Network Guard + archive tests. Run:  python3 -m unittest discover -s tests -v"""
 import os
-import socket
 import sys
 import tempfile
 import threading
