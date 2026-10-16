@@ -15,6 +15,7 @@ dedupe files, compress archived projects and update outdated packages in one cli
 [![Downloads](https://img.shields.io/github/downloads/SYasJ/StackRadar/total?color=39c5e0)](https://github.com/SYasJ/StackRadar/releases)
 [![CI](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml/badge.svg)](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml)
 [![RepoGrade](https://www.repo-grade.com/api/badge/syasj/stackradar)](https://www.repo-grade.com/report/syasj/stackradar)
+[![Coverage](https://codecov.io/gh/SYasJ/StackRadar/branch/main/graph/badge.svg)](https://codecov.io/gh/SYasJ/StackRadar)
 [![License: free for personal use](https://img.shields.io/badge/license-free%20for%20personal%20use-2dd4a7)](LICENSE)
 [![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-0b0e14)](#install)
 <br>
