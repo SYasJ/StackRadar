@@ -1,0 +1,57 @@
+# Project manifest for StackRadar.
+# StackRadar runs on the Python standard library alone: `python3 stackradar.py`, no installs.
+# This file declares project metadata, the supported Python range and the pinned dev tools
+# (linter), so `uv sync` reproduces the exact development environment from uv.lock.
+
+[project]
+name = "stackradar"
+version = "2.2.0"
+description = "Local developer-workspace dashboard and network guard: every repo, port, secret, AI agent, skill, schedule and package on one screen."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Yasir Jilani", email = "27597591+SYasJ@users.noreply.github.com" }]
+keywords = ["developer-tools", "dashboard", "network-monitor", "firewall", "secrets-scanner", "port-monitor", "ai-agents", "claude-code", "local-first"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: Other/Proprietary License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development",
+  "Topic :: System :: Monitoring",
+]
+dependencies = []  # standard library only
+
+[project.urls]
+Homepage = "https://syasj.github.io/StackRadar/"
+Source = "https://github.com/SYasJ/StackRadar"
+Documentation = "https://github.com/SYasJ/StackRadar/wiki"
+Changelog = "https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md"
+Issues = "https://github.com/SYasJ/StackRadar/issues"
+
+[dependency-groups]
+dev = ["ruff==0.17.1"]
+
+[tool.uv]
+# StackRadar is run as a script (and shipped as a desktop app), not installed as a package.
+package = false
+
+[tool.ruff]
+target-version = "py39"
+line-length = 200
+extend-exclude = ["desktop/node_modules", "desktop/release", "dist", "build", "_site", "_wiki"]
+
+[tool.ruff.lint]
+# Pyflakes (undefined names, unused imports/variables, ...) + syntax errors.
+select = ["E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Known leftovers (unused locals / one unused test import); cleanup is tracked separately.
+"stackradar.py" = ["F841"]
+"demo/make_demo_workspace.py" = ["F841"]
+"tests/test_network_archive.py" = ["F401"]

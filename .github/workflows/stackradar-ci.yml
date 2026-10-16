@@ -6,7 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Lockfile is in sync with pyproject.toml
+        run: uv lock --check
+      - name: Install pinned dev tools from uv.lock
+        run: uv sync --locked
+      - name: Lint Python (ruff, config in pyproject.toml)
+        run: uv run ruff check --output-format=github .
+
   test:
     strategy:
       fail-fast: false

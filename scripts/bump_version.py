@@ -4,7 +4,7 @@
     python3 scripts/bump_version.py 2.1.0        # set an explicit version
     python3 scripts/bump_version.py patch|minor|major
 
-Updates VERSION, desktop/package.json, every "current version" mention in the docs (README, landing page,
+Updates VERSION, desktop/package.json, pyproject.toml + uv.lock, every "current version" mention in the docs (README, landing page,
 wiki home, roadmap) and turns CHANGELOG's [Unreleased] section into the new version. Pushing the change to
 main starts the GitHub workflow that builds the .dmg / .exe / .AppImage and publishes them; the desktop
 app's auto-updater picks the new release up from there.
@@ -36,6 +36,17 @@ def main():
     pkg["version"] = new
     with open(pj, "w") as f:
         f.write(json.dumps(pkg, indent=2) + "\n")
+    # pyproject.toml declares the version, and uv.lock records it for the (virtual) project:
+    # update both so `uv lock --check` stays green after a bump.
+    for rel, pat in (("pyproject.toml", r'(?m)^(version = ")[\d.]+(")'),
+                     ("uv.lock", r'(name = "stackradar"\nversion = ")[\d.]+(")')):
+        fp = os.path.join(ROOT, rel)
+        if os.path.isfile(fp):
+            with open(fp, encoding="utf-8") as f:
+                text = f.read()
+            text = re.sub(pat, lambda m: m.group(1) + new + m.group(2), text, count=1)
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(text)
     for rel, pats in (("README.md", [r"(current version: \*\*)[\d.]+(\*\*)"]),
                       ("docs/index.html", [r'("softwareVersion": ")[\d.]+(")', r"(Current version <b>)[\d.]+(</b>)"]),
                       ("docs/wiki/Home.md", [r"(\*\*Current version: )[\d.]+(\*\*)"]),

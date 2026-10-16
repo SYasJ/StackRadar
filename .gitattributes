@@ -1,0 +1,16 @@
+# Normalise line endings; keep Windows launchers as CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.gif binary
+*.mp4 binary
+*.ico binary
+
+# Generated / vendored — collapse in diffs, exclude from language stats
+uv.lock linguist-generated=true -diff
+desktop/package-lock.json linguist-generated=true -diff
+media/** linguist-documentation

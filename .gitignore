@@ -9,3 +9,19 @@ media/video/work/
 /_wiki/
 desktop/build/release-notes.md
 __pycache__/
+
+# Python / tooling
+.venv/
+.ruff_cache/
+.pytest_cache/
+*.py[cod]
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# local secrets
+.env
+.env.*

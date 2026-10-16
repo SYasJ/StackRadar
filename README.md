@@ -93,6 +93,23 @@ python3 stackradar.py --root ~/Projects --depth 4 --open
 
 Windows: `python stackradar.py`, or double-click `StackRadar.bat`. macOS: double-click `StackRadar.command`.
 
+## Usage
+
+Open the desktop app, or run `python3 stackradar.py` and visit **http://localhost:8765**. Pick the folders to scan, then use the tabs
+(Overview, Projects, Network Guard, Ports, Lineage, System, Agents, Skills, Schedules, Duplicates, Disk space, Tools & packages…). Every panel has an ⓘ hint.
+
+| Option | What it does |
+|---|---|
+| `--root PATH` | Folder to scan (repeat for several). Default: your home folder |
+| `--depth N` | How deep to look for projects below each root (default `6`) |
+| `--port N` | Dashboard port (default `8765`) |
+| `--host ADDR` | Bind address. Default `127.0.0.1` (this machine only). `0.0.0.0` exposes it to your LAN |
+| `--open` | Open the dashboard in your browser |
+| `--no-scan` | Start without scanning (press **Scan** in the UI) |
+| `--version` | Print the version |
+
+Example: `python3 stackradar.py --root ~/Projects --root ~/work --depth 4 --open`. Full guide: [Quick start](docs/wiki/Quick-Start.md) · [Features tour](docs/wiki/Features-Tour.md).
+
 ## Privacy & safety
 
 - **Nothing leaves your machine.** No telemetry, no accounts. The only network calls are ones you click (check outdated packages, update packages, check for a StackRadar update).
@@ -125,7 +142,10 @@ StackRadar/
 ├── demo/                ← fake-workspace generator + screenshot script
 ├── tests/               ← unit + HTTP security tests  (python3 -m unittest discover -s tests)
 ├── scripts/             ← bump_version.py · release_notes.py · publish_wiki.py
+├── pyproject.toml · uv.lock  ← project manifest + pinned dev tools (ruff)
 ├── VERSION · CHANGELOG.md · ROADMAP.md
+├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md
+├── .github/             ← CI, release, Pages + wiki workflows · issue forms · PR template
 └── media/               ← screenshots, promo video
 ```
 
@@ -136,11 +156,28 @@ learning, students, research, charities, schools and government are all free, an
 **Commercial use** (at or for a company, client work, bundling or reselling) **needs a paid license**; see
 [COMMERCIAL.md](COMMERCIAL.md). Copyright © 2026 Yasir Jilani.
 
+## Development
+
+```bash
+git clone https://github.com/SYasJ/StackRadar.git && cd StackRadar
+python3 stackradar.py --root ~/Projects --open      # run from source: standard library only
+python3 -m unittest discover -s tests -v            # unit + HTTP security tests (no network needed)
+uv sync --locked && uv run ruff check .             # pinned linter from uv.lock (config in pyproject.toml)
+```
+
+CI runs the tests on macOS, Windows and Linux (Python 3.9 and 3.12), checks JS syntax, lints with ruff and verifies the lockfile on every push and pull request.
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome! Read the **[contributing guide](CONTRIBUTING.md)** (setup, tests, code style)
+and the **[code of conduct](CODE_OF_CONDUCT.md)**, then open an [issue](https://github.com/SYasJ/StackRadar/issues/new/choose) or a PR.
+Found a security problem? Please report it privately. See **[SECURITY.md](SECURITY.md)**.
+
 ## Maintainer & releases
 
-StackRadar is built and maintained by [@SYasJ](https://github.com/SYasJ). Bug reports and ideas are welcome as
-[issues](https://github.com/SYasJ/StackRadar/issues). Tests: `python3 -m unittest discover -s tests`. Releases are cut with
-`python3 scripts/bump_version.py minor` → edit `CHANGELOG.md` → commit → push to `main`. GitHub Actions then builds and publishes the installers.
+StackRadar is built and maintained by [@SYasJ](https://github.com/SYasJ). Releases are cut with
+`python3 scripts/bump_version.py minor` (it updates every version string, `pyproject.toml` and `uv.lock`), then you edit
+`CHANGELOG.md`, commit and push to `main`. GitHub Actions then builds and publishes the installers.
 See [Releasing & versioning](docs/wiki/Releasing-and-Versioning.md).
 
 <sub>Keywords: developer dashboard, application firewall, outbound connection monitor, per-app network monitor, little snitch alternative, data exfiltration detection, local dev environment manager, project finder, port monitor, API key scanner, secrets

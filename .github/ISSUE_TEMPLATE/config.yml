@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/SYasJ/StackRadar/security/advisories/new
+    about: Please report security issues privately, not as public issues.
+  - name: 📖 Documentation & FAQ
+    url: https://github.com/SYasJ/StackRadar/wiki
+    about: Installation help, troubleshooting and the full feature guide.
+  - name: 💼 Commercial license
+    url: https://github.com/SYasJ/StackRadar/blob/main/COMMERCIAL.md
+    about: Using StackRadar at or for a company? See the commercial license terms.

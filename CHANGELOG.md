@@ -6,6 +6,13 @@ The single source of truth is the `VERSION` file (bump it with `scripts/bump_ver
 
 ## [Unreleased]
 
+### Added
+- **Contributor docs:** `CONTRIBUTING.md` (setup, tests, code style), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1) and `SECURITY.md` (private reporting, scope).
+- **Issue forms** for bugs and features, a pull-request template, and links to security reporting and docs.
+- **`pyproject.toml` + `uv.lock`:** project manifest and pinned dev tools. `uv sync --locked` reproduces the dev environment. `bump_version.py` keeps both in step.
+- **Linting:** ruff (Pyflakes rules) configured in `pyproject.toml`. CI now has a lint job that also verifies the lockfile.
+- `.editorconfig`, `.gitattributes` and `.python-version`. README has **Usage**, **Development** and **Contributing** sections.
+
 ### Fixed
 - "Keep this, link the rest" for duplicate skills now works when no Trash is available: old copies go to `~/.stackradar/backups/skills/`.
 
