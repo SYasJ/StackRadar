@@ -12,9 +12,19 @@ dedupe files, compress archived projects and update outdated packages in one cli
 <sub>Formerly **DevRadar** (renamed in 2.1 because the old name clashed with other developer projects).</sub>
 
 [![Latest release](https://img.shields.io/github/v/release/SYasJ/StackRadar?label=version&color=39c5e0)](https://github.com/SYasJ/StackRadar/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/SYasJ/StackRadar/total?color=39c5e0)](https://github.com/SYasJ/StackRadar/releases)
 [![CI](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml/badge.svg)](https://github.com/SYasJ/StackRadar/actions/workflows/stackradar-ci.yml)
+[![RepoGrade](https://www.repo-grade.com/api/badge/syasj/stackradar)](https://www.repo-grade.com/report/syasj/stackradar)
 [![License: free for personal use](https://img.shields.io/badge/license-free%20for%20personal%20use-2dd4a7)](LICENSE)
 [![Platforms](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-0b0e14)](#install)
+<br>
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776ab?logo=python&logoColor=white)](pyproject.toml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
+[![Dependabot](https://img.shields.io/badge/dependabot-enabled-025e8c?logo=dependabot)](.github/dependabot.yml)
+[![Last commit](https://img.shields.io/github/last-commit/SYasJ/StackRadar)](https://github.com/SYasJ/StackRadar/commits/main)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 [Download](#install) · [Watch the 56-second tour](media/video/stackradar-promo.mp4) · [Wiki](https://github.com/SYasJ/StackRadar/wiki) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md)
 

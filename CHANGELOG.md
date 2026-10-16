@@ -13,6 +13,7 @@ The single source of truth is the `VERSION` file (bump it with `scripts/bump_ver
 - **Linting:** ruff (Pyflakes rules) configured in `pyproject.toml`. CI now has a lint job that also verifies the lockfile.
 - `.editorconfig`, `.gitattributes` and `.python-version`. README has **Usage**, **Development** and **Contributing** sections.
 - **Install as a command:** `pipx install git+https://github.com/SYasJ/StackRadar.git` (or `uv tool install …`) gives you a `stackradar` command. `pyproject.toml` now has a hatchling `[build-system]`, and the web UI ships inside the package.
+- **README badges:** RepoGrade score, downloads, Python 3.9+, Ruff, mypy, Dependabot, last commit, Contributor Covenant and PRs welcome.
 - **`.env.example`** documents the optional environment variables (none are required).
 - **Dependabot** keeps GitHub Actions, the uv-locked dev tools and the Electron app up to date with grouped monthly PRs.
 - **pytest + coverage + mypy:** `make test`, `make coverage`, `make typecheck` and `make check` (all pinned in `uv.lock`). CI runs pytest with coverage on 3 OSes × 2 Pythons, type-checks with mypy and uploads coverage to Codecov.

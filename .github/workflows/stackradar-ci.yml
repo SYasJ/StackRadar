@@ -57,4 +57,6 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
+          # Public repos need a (free) token: add it as the CODECOV_TOKEN repository secret.
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
