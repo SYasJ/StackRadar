@@ -15,7 +15,7 @@ Thanks for helping make StackRadar better! Bug reports, ideas, docs fixes and co
 
 Security problems should **not** be reported as public issues. See [SECURITY.md](SECURITY.md).
 
-## Development setup
+## Setup
 
 StackRadar runs on the Python standard library alone, so there is nothing to install to run it:
 
@@ -40,7 +40,7 @@ cd desktop && npm ci && npm start
 
 Need sample data? `python3 demo/make_demo_workspace.py` builds a fake workspace for screenshots and testing.
 
-## Running the tests
+## Testing
 
 ```bash
 make test                 # = uv run pytest: unit + HTTP security tests, no network needed
