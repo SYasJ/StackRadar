@@ -93,6 +93,15 @@ python3 stackradar.py --root ~/Projects --depth 4 --open
 
 Windows: `python stackradar.py`, or double-click `StackRadar.bat`. macOS: double-click `StackRadar.command`.
 
+### Install as a command (pipx / uv)
+
+```bash
+pipx install git+https://github.com/SYasJ/StackRadar.git     # or: uv tool install git+https://github.com/SYasJ/StackRadar.git
+stackradar --root ~/Projects --open
+```
+
+No configuration is needed. Optional settings (update source, upstream proxy) are listed in [`.env.example`](.env.example).
+
 ## Usage
 
 Open the desktop app, or run `python3 stackradar.py` and visit **http://localhost:8765**. Pick the folders to scan, then use the tabs

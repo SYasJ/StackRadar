@@ -54,8 +54,13 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# when frozen by PyInstaller (desktop build) the UI files live in the bundle dir
-APP_DIR = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+# Where the UI files (index.html, static/, VERSION) live:
+#   - frozen by PyInstaller (desktop build): the bundle dir
+#   - run from a checkout: next to this file
+#   - installed as a package (pip / pipx / uv tool): the stackradar_app/ data folder beside this module
+_HERE = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = getattr(sys, "_MEIPASS", None) or (
+    _HERE if os.path.isfile(os.path.join(_HERE, "index.html")) else os.path.join(_HERE, "stackradar_app"))
 OS_NAME = platform.system()  # 'Darwin' | 'Linux' | 'Windows'
 
 

@@ -25,6 +25,7 @@ Thumbs.db
 # local secrets
 .env
 .env.*
+!.env.example
 
 # test / type-check outputs
 .coverage

@@ -1,0 +1,30 @@
+# Keeps dependencies current: Dependabot opens grouped pull requests, and CI must pass before you merge.
+version: 2
+updates:
+  # GitHub Actions used by the CI, release, Pages and wiki workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Python dev tools pinned in uv.lock (pytest, ruff, mypy). StackRadar itself has no runtime deps.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dev-tools:
+        patterns: ["*"]
+
+  # Desktop app (Electron, electron-builder, electron-updater)
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: monthly
+    groups:
+      electron:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

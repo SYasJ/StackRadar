@@ -1,7 +1,12 @@
 # Project manifest for StackRadar.
 # StackRadar runs on the Python standard library alone: `python3 stackradar.py`, no installs.
-# This file declares project metadata, the supported Python range and the pinned dev tools
-# (linter), so `uv sync` reproduces the exact development environment from uv.lock.
+# This file declares project metadata, the supported Python range, the pinned dev tools
+# (`uv sync` reproduces them from uv.lock) and how to build an installable package:
+#     pipx install git+https://github.com/SYasJ/StackRadar      →  `stackradar` command
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
 
 [project]
 name = "stackradar"
@@ -27,6 +32,9 @@ classifiers = [
 ]
 dependencies = []  # standard library only
 
+[project.scripts]
+stackradar = "stackradar:main"
+
 [project.urls]
 Homepage = "https://syasj.github.io/StackRadar/"
 Source = "https://github.com/SYasJ/StackRadar"
@@ -43,8 +51,20 @@ dev = [
 ]
 
 [tool.uv]
-# StackRadar is run as a script (and shipped as a desktop app), not installed as a package.
+# For development, uv only installs the dev tools; StackRadar itself runs straight from the checkout.
 package = false
+
+[tool.hatch.build.targets.wheel]
+only-include = ["stackradar.py"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# The web UI ships as a data folder next to the module (see APP_DIR in stackradar.py).
+"index.html" = "stackradar_app/index.html"
+"static" = "stackradar_app/static"
+"VERSION" = "stackradar_app/VERSION"
+
+[tool.hatch.build.targets.sdist]
+include = ["stackradar.py", "index.html", "static", "VERSION", "LICENSE", "COMMERCIAL.md", "README.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 # `pytest` (or `make test`) runs the whole suite; the tests are plain unittest classes.
