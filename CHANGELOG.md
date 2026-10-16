@@ -12,8 +12,10 @@ The single source of truth is the `VERSION` file (bump it with `scripts/bump_ver
 - **`pyproject.toml` + `uv.lock`:** project manifest and pinned dev tools. `uv sync --locked` reproduces the dev environment. `bump_version.py` keeps both in step.
 - **Linting:** ruff (Pyflakes rules) configured in `pyproject.toml`. CI now has a lint job that also verifies the lockfile.
 - `.editorconfig`, `.gitattributes` and `.python-version`. README has **Usage**, **Development** and **Contributing** sections.
+- **pytest + coverage + mypy:** `make test`, `make coverage`, `make typecheck` and `make check` (all pinned in `uv.lock`). CI runs pytest with coverage on 3 OSes × 2 Pythons, type-checks with mypy and uploads coverage to Codecov.
 
 ### Fixed
+- Type-check findings: a duplicate nested `_after` callback in the tools API is renamed, and `SYSMON` is annotated. Dead code flagged by the linter is removed. No behaviour change.
 - "Keep this, link the rest" for duplicate skills now works when no Trash is available: old copies go to `~/.stackradar/backups/skills/`.
 
 ## [2.2.0] — 2026-10-04

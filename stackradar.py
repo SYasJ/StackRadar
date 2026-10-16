@@ -3004,7 +3004,7 @@ def settings_set(patch):
 # system monitor: CPU, load, memory, swap, disk, network, top processes
 # ---------------------------------------------------------------------------
 
-SYSMON = {"lock": threading.Lock(), "prev_cpu": None, "prev_net": None,
+SYSMON: dict = {"lock": threading.Lock(), "prev_cpu": None, "prev_net": None,
           "history": [], "procs": {"t": 0, "data": []}, "started": False}
 SYSMON_KEEP = 150   # samples (2 s apart -> 5 minutes)
 
@@ -7616,10 +7616,10 @@ class Handler(BaseHTTPRequestHandler):
             if not argv:
                 return self._send(400, {"error": "action must be update or remove"})
 
-            def _after(rc):
+            def _after_tool(rc):
                 INV["data"] = None
                 GLOBAL_OUTDATED["data"] = None
-            return self._send(200, job_start(("Remove " if act == "remove" else "Update ") + name, argv, kind=act, after=_after))
+            return self._send(200, job_start(("Remove " if act == "remove" else "Update ") + name, argv, kind=act, after=_after_tool))
         if p == "/api/tools/latest":
             def work(log, job):
                 log("asking npm, pip and Homebrew for newer versions…")

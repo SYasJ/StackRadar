@@ -25,10 +25,11 @@ cd StackRadar
 python3 stackradar.py --root ~/Projects --open     # http://localhost:8765
 ```
 
-For the developer tools (the linter), use [uv](https://docs.astral.sh/uv/). It installs the exact versions pinned in `uv.lock`:
+For the developer tools (pytest, ruff, mypy), use [uv](https://docs.astral.sh/uv/). It installs the exact versions pinned in `uv.lock`:
 
 ```bash
 uv sync --locked          # creates .venv with the pinned dev tools
+make help                 # lists the dev commands (test, coverage, lint, typecheck, check)
 ```
 
 Desktop app (Electron), optional. In development it starts `python3 stackradar.py` as its backend:
@@ -42,16 +43,20 @@ Need sample data? `python3 demo/make_demo_workspace.py` builds a fake workspace 
 ## Running the tests
 
 ```bash
-python3 -m unittest discover -s tests -v      # unit + HTTP security tests, no network needed
+make test                 # = uv run pytest: unit + HTTP security tests, no network needed
+make coverage             # same, with a coverage report
+make check                # lint + type check + tests: exactly what CI runs
 ```
 
-CI runs the same suite on macOS, Windows and Linux with Python 3.9 and 3.12. Please add or update tests for any behaviour change.
+No tools installed? `python3 -m unittest discover -s tests -v` runs the same suite with the standard library alone.
+CI runs it with coverage on macOS, Windows and Linux with Python 3.9 and 3.12. Please add or update tests for any behaviour change.
 
 ## Code style
 
 - **Python:** must pass the linter, which is configured in `pyproject.toml` (Pyflakes rules plus syntax errors):
   ```bash
-  uv run ruff check .          # or: ruff check .
+  uv run ruff check .          # or: make lint
+  uv run mypy                  # type check, or: make typecheck
   ```
   - Standard library only. **No runtime dependencies** in `stackradar.py`.
   - Must run on **Python 3.9+**. Avoid newer syntax such as `match` statements or `X | Y` type unions at runtime.
@@ -72,7 +77,7 @@ CI runs the same suite on macOS, Windows and Linux with Python 3.9 and 3.12. Ple
 
 1. Fork the repo and branch from `main` (`fix/…`, `feat/…` or `docs/…`).
 2. Keep each PR focused on one change. Update the `## [Unreleased]` section of [CHANGELOG.md](CHANGELOG.md).
-3. Make sure `ruff check .` and the test suite pass locally.
+3. Make sure `make check` passes locally (ruff, mypy and the tests).
 4. Fill in the PR template, and add screenshots for UI changes.
 5. Don't bump the version; maintainers do that at release time (`scripts/bump_version.py`).
 

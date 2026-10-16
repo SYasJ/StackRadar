@@ -11,8 +11,7 @@
 
 ## How was it tested?
 
-- [ ] `python3 -m unittest discover -s tests -v` passes
-- [ ] `ruff check .` passes
+- [ ] `make check` passes (ruff, mypy, pytest)
 - [ ] `node --check` passes for changed JS files
 - [ ] Tried it in the app (add screenshots below for UI changes)
 

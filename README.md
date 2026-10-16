@@ -140,9 +140,9 @@ StackRadar/
 ├── desktop/             ← Electron app (dmg / exe / AppImage) + auto-update
 ├── docs/                ← landing page (SEO) + wiki pages
 ├── demo/                ← fake-workspace generator + screenshot script
-├── tests/               ← unit + HTTP security tests  (python3 -m unittest discover -s tests)
+├── tests/               ← unit + HTTP security tests  (make test · uv run pytest)
 ├── scripts/             ← bump_version.py · release_notes.py · publish_wiki.py
-├── pyproject.toml · uv.lock  ← project manifest + pinned dev tools (ruff)
+├── pyproject.toml · uv.lock · Makefile  ← manifest, pinned dev tools (pytest, ruff, mypy), dev commands
 ├── VERSION · CHANGELOG.md · ROADMAP.md
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md
 ├── .github/             ← CI, release, Pages + wiki workflows · issue forms · PR template
@@ -161,11 +161,15 @@ learning, students, research, charities, schools and government are all free, an
 ```bash
 git clone https://github.com/SYasJ/StackRadar.git && cd StackRadar
 python3 stackradar.py --root ~/Projects --open      # run from source: standard library only
-python3 -m unittest discover -s tests -v            # unit + HTTP security tests (no network needed)
-uv sync --locked && uv run ruff check .             # pinned linter from uv.lock (config in pyproject.toml)
+uv sync --locked                                    # pinned dev tools from uv.lock (pytest, ruff, mypy)
+make test                                           # = uv run pytest   (unit + HTTP security tests, no network needed)
+make check                                          # lint (ruff) + type check (mypy) + tests: exactly what CI runs
+make coverage                                       # tests with a coverage report
 ```
 
-CI runs the tests on macOS, Windows and Linux (Python 3.9 and 3.12), checks JS syntax, lints with ruff and verifies the lockfile on every push and pull request.
+No `make`? Run the commands directly: `uv run pytest`, `uv run ruff check .`, `uv run mypy`. The suite also runs with no tools at all: `python3 -m unittest discover -s tests`.
+
+CI runs the tests with coverage on macOS, Windows and Linux (Python 3.9 and 3.12), lints with ruff, type-checks with mypy, checks JS syntax and verifies the lockfile on every push and pull request.
 
 ## Contributing
 

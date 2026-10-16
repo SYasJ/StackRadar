@@ -25,3 +25,9 @@ Thumbs.db
 # local secrets
 .env
 .env.*
+
+# test / type-check outputs
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/

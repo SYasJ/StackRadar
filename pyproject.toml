@@ -35,11 +35,36 @@ Changelog = "https://github.com/SYasJ/StackRadar/blob/main/CHANGELOG.md"
 Issues = "https://github.com/SYasJ/StackRadar/issues"
 
 [dependency-groups]
-dev = ["ruff==0.17.1"]
+dev = [
+  "ruff==0.17.1",
+  "pytest>=8",
+  "pytest-cov>=5",
+  "mypy>=1.15; python_version >= '3.10'",
+]
 
 [tool.uv]
 # StackRadar is run as a script (and shipped as a desktop app), not installed as a package.
 package = false
+
+[tool.pytest.ini_options]
+# `pytest` (or `make test`) runs the whole suite; the tests are plain unittest classes.
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["stackradar", "scripts"]
+branch = true
+
+[tool.coverage.report]
+show_missing = false
+skip_empty = true
+
+[tool.mypy]
+# Type check in CI. Runs as 3.10 (newest mypy can't target 3.9; ruff enforces 3.9 syntax).
+python_version = "3.10"
+files = ["stackradar.py", "scripts", "tests", "demo"]
+ignore_missing_imports = true
+warn_unused_configs = true
 
 [tool.ruff]
 target-version = "py39"
