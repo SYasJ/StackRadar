@@ -36,11 +36,11 @@
     "release": "node scripts/build-backend.js && electron-builder --publish always"
   },
   "dependencies": {
-    "electron-updater": "6.8.9"
+    "electron-updater": "6.8.11"
   },
   "devDependencies": {
     "electron": "44.5.1",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.18.0"
   },
   "build": {
     "appId": "dev.stackradar.app",
