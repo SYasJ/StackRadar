@@ -44,7 +44,7 @@ Issues = "https://github.com/SYasJ/StackRadar/issues"
 
 [dependency-groups]
 dev = [
-  "ruff==0.17.1",
+  "ruff==0.17.3",
   "pytest>=8",
   "pytest-cov>=5",
   "mypy>=1.15; python_version >= '3.10'",
