@@ -33,7 +33,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: v
         name: Is there a version to release?
         run: |
@@ -54,8 +54,8 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - run: python -m unittest discover -s tests -v
 
@@ -69,7 +69,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       V: ${{ needs.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python3 scripts/release_notes.py
       - name: Draft release
         run: |
@@ -110,7 +110,7 @@ jobs:
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Python (macOS — universal2 from python.org so one backend runs on Intel + Apple silicon)
         if: runner.os == 'macOS'
@@ -121,7 +121,7 @@ jobs:
           echo "DR_UNIVERSAL=1" >> "$GITHUB_ENV"
       - name: Python (Windows / Linux)
         if: runner.os != 'macOS'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: PyInstaller
         run: |
@@ -129,7 +129,7 @@ jobs:
           "$PY" -m pip install --upgrade pip pyinstaller
           echo "PYTHON=$PY" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -154,7 +154,7 @@ jobs:
           if [[ "${{ runner.os }}" == "macOS" && -z "$CSC_LINK" ]]; then EXTRA="-c.mac.identity=-"; fi
           npx electron-builder ${{ matrix.target }} --publish "$PUB" $EXTRA
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: stackradar-${{ runner.os }}
           path: |
@@ -175,8 +175,8 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: stackradar-*
